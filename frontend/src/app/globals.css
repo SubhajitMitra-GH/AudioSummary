@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+:root {
+  --accent: #1a237e; /* Royal Dark Blue */
+  --accent-hover: #121b74;
+  --accent-light: #3f51b5;
+  --surface: #f4f6fc; /* Lavender/light-blue background tint */
+  --surface-raised: #ffffff;
+  --text-primary: #0d1b3e; /* Deep Navy */
+  --text-secondary: #4f5e7b; /* Slate Gray */
+  --text-muted: #8c9ba5;
+  --border: #e8ecf4;
+  --border-subtle: #f1f3f9;
+}
+
+body {
+  background: var(--surface);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Beautiful soft purple-blue gradient background matching Screenshot 1 */
+.screenshot-bg {
+  background-color: #f3f5fa;
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(224, 231, 255, 0.4) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(245, 243, 255, 0.3) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(232, 240, 254, 0.4) 0px, transparent 50%);
+}
+
+/* Rounded card matching Screenshot 1 */
+.card-premium {
+  background: #ffffff;
+  border: 1px solid rgba(232, 236, 244, 0.8);
+  box-shadow: 0 10px 30px -5px rgba(26, 35, 126, 0.03), 0 1px 3px 0 rgba(0, 0, 0, 0.01);
+}
+
+/* Recording waveform animation */
+@keyframes rhythm-wave {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+
+.wave-line {
+  transform-origin: center;
+  animation: rhythm-wave 1.2s ease-in-out infinite;
+}
+.wave-line:nth-child(2) { animation-delay: 0.15s; }
+.wave-line:nth-child(3) { animation-delay: 0.3s; }
+.wave-line:nth-child(4) { animation-delay: 0.45s; }
+.wave-line:nth-child(5) { animation-delay: 0.6s; }
+
+/* Pulse animations */
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.pulse-loader {
+  animation: pulse-soft 1.5s ease-in-out infinite;
+}
+
+/* Thin elegant scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Clean transitions */
+* {
+  transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  transition-duration: 200ms;
+}
