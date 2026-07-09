@@ -3,7 +3,8 @@
 import React from 'react';
 import { Session } from '../utils/supabase';
 import { decryptText } from '../utils/crypto';
-import { Plus, MessageSquare, Loader2, Cpu, Database, AudioLines, X, Edit3, Check } from 'lucide-react';
+import { Plus, MessageSquare, Loader2, Cpu, Database, AudioLines, X, Edit3, Check, LogOut } from 'lucide-react';
+import { supabase } from '../utils/supabase';
 
 interface SidebarProps {
   sessions: Session[];
@@ -26,6 +27,13 @@ export default function Sidebar({
 }: SidebarProps) {
   const [editingSessionId, setEditingSessionId] = React.useState<string | null>(null);
   const [editingText, setEditingText] = React.useState<string>('');
+  const [userEmail, setUserEmail] = React.useState<string>('');
+
+  React.useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUserEmail(user?.email || '');
+    });
+  }, []);
 
   const startEditing = (id: string, currentTitle: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -174,17 +182,43 @@ export default function Sidebar({
       </div>
 
       {/* Sidebar Footer */}
-      <div className="mt-auto border-t border-slate-100/80 bg-slate-50/30">
-        <div className="px-4 py-3 flex flex-col gap-2.5">
-          <div className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-slate-500 font-medium">
-            <Cpu className="w-4 h-4 text-slate-400 shrink-0" />
+      <div className="mt-auto border-t border-slate-100/80 bg-slate-50/30 flex flex-col">
+        <div className="px-4 py-3 flex flex-col gap-1.5 border-b border-slate-100/60">
+          <div className="flex items-center gap-2.5 px-3 py-1 text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
+            <Cpu className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <span>Local Embeddings</span>
           </div>
-          <div className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-slate-500 font-medium">
-            <Database className="w-4 h-4 text-slate-400 shrink-0" />
+          <div className="flex items-center gap-2.5 px-3 py-1 text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
+            <Database className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <span>Supabase DB</span>
           </div>
         </div>
+
+        {/* User Profile and Log Out */}
+        {userEmail && (
+          <div className="p-4 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-indigo-100 text-[#1a237e] flex items-center justify-center font-bold text-xs shrink-0 border border-indigo-200/50">
+                {userEmail.charAt(0).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-800 truncate leading-none mb-1">
+                  {userEmail.split('@')[0]}
+                </p>
+                <p className="text-[10px] text-slate-400 font-medium truncate">
+                  {userEmail}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => supabase.auth.signOut()}
+              title="Sign Out"
+              className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all cursor-pointer shrink-0"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

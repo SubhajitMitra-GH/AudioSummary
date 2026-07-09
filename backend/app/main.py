@@ -2,8 +2,10 @@ import os
 import uuid
 import shutil
 import logging
-from fastapi import FastAPI, UploadFile, File, HTTPException, status, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import requests
 from contextlib import asynccontextmanager
 from app.redis_client import redis_client
 from app.config import settings
@@ -13,6 +15,75 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 logger = logging.getLogger("uvicorn.error")
+
+security = HTTPBearer()
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    token = credentials.credentials
+    if not settings.supabase_url or not settings.supabase_anon_key:
+        logger.error("Supabase config is missing on backend")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication configuration is missing on the server."
+        )
+    
+    url = f"{settings.supabase_url}/auth/v1/user"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "apikey": settings.supabase_anon_key
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired session token."
+            )
+        return {"user": response.json(), "token": token}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Supabase auth check failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed."
+        )
+
+def verify_session_ownership(session_id: str, token: str, is_new_allowed: bool = True):
+    url = f"{settings.supabase_url}/rest/v1/sessions"
+    headers = {
+        "apikey": settings.supabase_anon_key
+    }
+    params = {
+        "id": f"eq.{session_id}",
+        "select": "id,user_id"
+    }
+    try:
+        res = requests.get(url, headers=headers, params=params, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            if not data:
+                if is_new_allowed:
+                    return
+                else:
+                    raise HTTPException(status_code=404, detail="Session not found.")
+            
+            user_headers = {
+                "Authorization": f"Bearer {token}",
+                "apikey": settings.supabase_anon_key
+            }
+            res_user = requests.get(url, headers=user_headers, params=params, timeout=10)
+            if res_user.status_code != 200 or not res_user.json():
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to session.")
+        else:
+            logger.error(f"Error checking session: {res.status_code} {res.text}")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access verification failed.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Session verification exception: {e}")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access verification failed.")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -59,8 +130,11 @@ async def health_check():
 @app.post("/upload", status_code=200)
 async def upload_audio(
     file: UploadFile = File(...),
-    session_id: str = Form(..., description="The unique session ID for this recording")
+    session_id: str = Form(..., description="The unique session ID for this recording"),
+    credentials: dict = Depends(get_current_user)
 ):
+    # Verify session ownership
+    verify_session_ownership(session_id, credentials["token"], is_new_allowed=True)
     # Validate file format
     allowed_extensions = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm"}
     file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
@@ -121,7 +195,12 @@ class ChatRequest(BaseModel):
     audio_id: Optional[str] = Field(None, description="The unique identifier of the audio file")
 
 @app.post("/chat", status_code=200)
-async def chat_with_audio(request: ChatRequest):
+async def chat_with_audio(
+    request: ChatRequest,
+    credentials: dict = Depends(get_current_user)
+):
+    if request.audio_id:
+        verify_session_ownership(request.audio_id, credentials["token"], is_new_allowed=False)
     try:
         response = rag_pipeline.answer_question(request.question, audio_id=request.audio_id)
         return response
@@ -137,12 +216,18 @@ class LinkRequest(BaseModel):
     session_id: str = Field(..., description="Unique session ID for indexing")
 
 @app.post("/upload-link", status_code=200)
-async def upload_link(request: LinkRequest):
+async def upload_link(
+    request: LinkRequest,
+    credentials: dict = Depends(get_current_user)
+):
     if not request.url or not request.session_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="url and session_id are required fields"
         )
+
+    # Verify session ownership
+    verify_session_ownership(request.session_id, credentials["token"], is_new_allowed=True)
 
     # Create temporary directory if it doesn't exist
     temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "temp_audio")
@@ -191,5 +276,6 @@ async def upload_link(request: LinkRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    # Trigger uvicorn reload to connect to the active Redis Stack instance
     uvicorn.run("app.main:app", host=settings.host, port=settings.port, reload=True)
 

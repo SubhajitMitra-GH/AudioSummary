@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     port: int = 8000
     host: str = "0.0.0.0"
     llm_model: str = "llama3"
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

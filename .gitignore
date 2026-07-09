@@ -1,0 +1,66 @@
+# System files
+.DS_Store
+Thumbs.db
+
+# Environment variables and secrets (CRITICAL: Do not commit keys)
+.env
+.env.local
+.env.*.local
+*.env
+*.pem
+
+# Frontend (Node / Next.js)
+/frontend/node_modules/
+/frontend/.next/
+/frontend/out/
+/frontend/build/
+/frontend/.vercel/
+/frontend/*.tsbuildinfo
+/frontend/next-env.d.ts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Backend (Python / FastAPI)
+/backend/.venv/
+/backend/venv/
+/backend/env/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local database/temporary files
+/backend/temp_audio/
+/backend/scratch/
+
+/context

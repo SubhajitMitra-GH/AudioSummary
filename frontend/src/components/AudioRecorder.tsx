@@ -2,6 +2,7 @@
 
 import React, { useState, useRef } from 'react';
 import { Mic, Square, Play, Pause, Upload, Link2, Loader2, ArrowRight, AudioLines } from 'lucide-react';
+import { supabase } from '../utils/supabase';
 
 interface AudioRecorderProps {
   onIngestSuccess: (sessionId: string, transcript: string) => void;
@@ -103,7 +104,16 @@ export default function AudioRecorder({
     formData.append('file', audioBlob, uploadFile ? uploadFile.name : `rec_${Date.now()}.webm`);
     formData.append('session_id', sessionId);
     try {
-      const res = await fetch('http://localhost:8000/upload', { method: 'POST', body: formData });
+      const { data: { session: sAuth } } = await supabase.auth.getSession();
+      const token = sAuth?.access_token;
+
+      const res = await fetch('http://localhost:8000/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
       if (!res.ok) throw new Error(`Status ${res.status}`);
       const result = await res.json();
       onIngestSuccess(sessionId, result.transcript);
@@ -119,9 +129,15 @@ export default function AudioRecorder({
     setRecordState('processing');
     const sessionId = currentSessionId || crypto.randomUUID();
     try {
+      const { data: { session: sAuth } } = await supabase.auth.getSession();
+      const token = sAuth?.access_token;
+
       const res = await fetch('http://localhost:8000/upload-link', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ url: linkUrl, session_id: sessionId }),
       });
       if (!res.ok) {

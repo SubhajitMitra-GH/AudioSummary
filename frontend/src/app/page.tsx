@@ -7,8 +7,11 @@ import AudioRecorder from '../components/AudioRecorder';
 import { supabase, Session, ChatMessage } from '../utils/supabase';
 import { encryptText, decryptText } from '../utils/crypto';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import Auth from '../components/Auth';
 
 export default function Home() {
+  const [user, setUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -16,10 +19,30 @@ export default function Home() {
   const [sendingMessage, setSendingMessage] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
 
+  // 1. Get/Listen to auth state
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
   const fetchSessions = async () => {
+    if (!user) return;
     setLoadingSessions(true);
     try {
-      const { data, error } = await supabase.from('sessions').select('*').order('created_at', { ascending: false });
+      const { data, error } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
       if (error) throw error;
       setSessions(data || []);
     } catch (e) {
@@ -43,9 +66,15 @@ export default function Home() {
     }
   }, []);
 
+  // 2. Fetch sessions when authenticated user changes
   useEffect(() => {
-    fetchSessions();
-  }, []);
+    if (user) {
+      fetchSessions();
+    } else {
+      setSessions([]);
+      setCurrentSessionId(null);
+    }
+  }, [user]);
 
   useEffect(() => {
     if (currentSessionId) {
@@ -84,7 +113,8 @@ export default function Home() {
     try {
       const { error: sErr } = await supabase.from('sessions').insert({
         id: sessionId,
-        session_title: encryptText(rawTitle)
+        session_title: encryptText(rawTitle),
+        user_id: user?.id
       });
       if (sErr) throw sErr;
       await fetchSessions();
@@ -125,9 +155,15 @@ export default function Home() {
     } catch {}
 
     try {
+      const { data: { session: sAuth } } = await supabase.auth.getSession();
+      const token = sAuth?.access_token;
+
       const res = await fetch('http://localhost:8000/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ question: text, audio_id: currentSessionId }),
       });
       if (!res.ok) throw new Error(`Status ${res.status}`);
@@ -196,6 +232,23 @@ export default function Home() {
     const s = sessions.find(s => s.id === currentSessionId);
     return s ? (decryptText(s.session_title) || 'Untitled') : 'Workspace Chat';
   })();
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center bg-[#f4f6fc]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[#1a237e] flex items-center justify-center shadow-md animate-pulse">
+            <span className="text-white text-lg font-bold">✨</span>
+          </div>
+          <span className="text-xs font-semibold text-slate-400">Restoring active session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Auth />;
+  }
 
   return (
     <main className="h-screen w-screen flex overflow-hidden screenshot-bg">
