@@ -20,13 +20,21 @@ def download_audio_from_url(url: str, output_path_without_ext: str) -> str:
     # Check if it is a YouTube URL
     youtube_regex = (
         r'(https?://)?(www\.)?'
-        '(youtube|youtu|youtube-nocookie)\.(com|be)/'
-        '(watch\?v=|embed/|v/|.+\?v=)?([^&=%\?]{11})'
+        r'(youtube|youtu|youtube-nocookie)\.(com|be)/'
+        r'(watch\?v=|embed/|v/|.+\?v=)?([^&=%\?]{11})'
     )
     is_youtube = re.match(youtube_regex, url) is not None
     
     if is_youtube:
         logger.info(f"URL detected as YouTube: {url}")
+        
+        # Locate ffmpeg to prevent Broken pipe errors in packaged apps
+        ffmpeg_loc = None
+        for p in ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']:
+            if os.path.exists(p):
+                ffmpeg_loc = os.path.dirname(p)
+                break
+                
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': output_path_without_ext,
@@ -36,18 +44,58 @@ def download_audio_from_url(url: str, output_path_without_ext: str) -> str:
                 'preferredquality': '192',
             }],
             'quiet': True,
+            'nocheckcertificate': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['ios', 'android', 'web_creator', 'web']
+                }
+            }
         }
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+        
+        if ffmpeg_loc:
+            ydl_opts['ffmpeg_location'] = ffmpeg_loc
+            logger.info(f"FFmpeg location set for yt-dlp: {ffmpeg_loc}")
+        
+        # Try to use cookies from common browsers to bypass YouTube bot detection
+        browsers_to_try = ['chrome', 'safari', 'firefox', 'brave']
+        download_success = False
+        last_error = None
+
+        for browser in browsers_to_try:
+            try:
+                logger.info(f"Attempting YouTube download using cookies from browser: {browser}")
+                current_opts = ydl_opts.copy()
+                current_opts['cookiesfrombrowser'] = (browser,)
+                with yt_dlp.YoutubeDL(current_opts) as ydl:
+                    ydl.download([url])
+                download_success = True
+                break
+            except Exception as e:
+                logger.warning(f"Failed to download using cookies from {browser}: {e}")
+                last_error = e
+
+        if not download_success:
+            # Fallback: attempt without cookies
+            try:
+                logger.info("Attempting YouTube download without browser cookies...")
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+                download_success = True
+            except Exception as e:
+                logger.error(f"yt-dlp extraction failed: {e}")
+                last_error = e
+
+        if not download_success:
+            raise RuntimeError(
+                f"Failed to extract audio from YouTube link: {last_error}. "
+                "YouTube flagged the request as bot traffic. Please make sure you are logged in to YouTube in Chrome or Safari "
+                "on your computer to share the browser cookies and try again."
+            )
             
-            # yt-dlp appends .mp3 because of postprocessor
-            final_path = f"{output_path_without_ext}.mp3"
-            logger.info(f"YouTube audio downloaded successfully: {final_path}")
-            return final_path
-        except Exception as e:
-            logger.error(f"yt-dlp extraction failed: {e}")
-            raise RuntimeError(f"Failed to extract audio from YouTube link: {e}")
+        # yt-dlp appends .mp3 because of postprocessor
+        final_path = f"{output_path_without_ext}.mp3"
+        logger.info(f"YouTube audio downloaded successfully: {final_path}")
+        return final_path
             
     else:
         logger.info(f"URL detected as direct file link: {url}")

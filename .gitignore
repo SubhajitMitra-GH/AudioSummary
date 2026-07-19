@@ -37,6 +37,7 @@ yarn-error.log*
 *.py[cod]
 *$py.class
 *.so
+*.spec
 .Python
 build/
 develop-eggs/
@@ -62,5 +63,6 @@ MANIFEST
 # Local database/temporary files
 /backend/temp_audio/
 /backend/scratch/
+dump.rdb
 
 /context

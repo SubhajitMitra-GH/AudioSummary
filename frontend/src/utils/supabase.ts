@@ -9,6 +9,7 @@ export interface Session {
   id: string; // UUIDv4
   session_title: string; // Ciphertext (AES encrypted)
   created_at: string;
+  synced?: boolean;
 }
 
 export interface ChatMessage {
@@ -17,4 +18,5 @@ export interface ChatMessage {
   sender: 'user' | 'assistant';
   message_text: string; // Ciphertext (AES encrypted)
   created_at: string;
+  synced?: boolean;
 }

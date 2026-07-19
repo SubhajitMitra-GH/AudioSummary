@@ -18,7 +18,7 @@ trap cleanup EXIT SIGINT SIGTERM
 
 echo -e "\033[1;34mStarting AudioSummary Services...\033[0m"
 
-# 1. Start Redis Stack Server
+# 1. Start Redis Stack Server (Local Cache & Vector Store)
 echo -e "\033[1;36m[1/4] Starting Redis Stack Server...\033[0m"
 if command -v redis-stack-server >/dev/null 2>&1; then
     redis-stack-server > /dev/null 2>&1 &
@@ -43,6 +43,12 @@ fi
 
 # 3. Start Python Backend
 echo -e "\033[1;36m[3/4] Starting FastAPI Python Backend...\033[0m"
+# Free port 8000 if occupied
+if lsof -i :8000 -t >/dev/null 2>&1; then
+    echo -e "\033[1;33m[Warning] Port 8000 is occupied. Freeing port...\033[0m"
+    lsof -i :8000 -t | xargs kill -9 2>/dev/null || true
+    sleep 1
+fi
 cd backend
 source .venv/bin/activate
 python -m app.main &

@@ -1,40 +1,120 @@
 @import "tailwindcss";
 
+/* ═══════════════════════════════════════════════════════
+   TELL ME. — Design System Tokens
+   ═══════════════════════════════════════════════════════ */
+
 :root {
-  --accent: #1a237e; /* Royal Dark Blue */
-  --accent-hover: #121b74;
-  --accent-light: #3f51b5;
-  --surface: #f4f6fc; /* Lavender/light-blue background tint */
-  --surface-raised: #ffffff;
-  --text-primary: #0d1b3e; /* Deep Navy */
-  --text-secondary: #4f5e7b; /* Slate Gray */
+  /* Backgrounds */
+  --bg-primary: #f4f6fc;
+  --bg-surface: #ffffff;
+  --bg-surface-raised: #ffffff;
+  --bg-sidebar: #fcfcfd;
+  --bg-input: #f8f9fd;
+  --bg-hover: #f1f3f9;
+
+  /* Text */
+  --text-primary: #0d1b3e;
+  --text-secondary: #4f5e7b;
   --text-muted: #8c9ba5;
+  --text-on-accent: #ffffff;
+
+  /* Borders */
   --border: #e8ecf4;
   --border-subtle: #f1f3f9;
+
+  /* Accent (Violet-Purple) */
+  --accent: #6c3beb;
+  --accent-hover: #5a2dd4;
+  --accent-light: #8b6cf7;
+  --accent-bg: #f0ecff;
+  --accent-border: rgba(108, 59, 235, 0.15);
+  --accent-shadow: rgba(108, 59, 235, 0.08);
+
+  /* Chat Bubbles */
+  --user-bubble: #6c3beb;
+  --user-bubble-hover: #5a2dd4;
+  --ai-bubble-bg: #ffffff;
+  --ai-bubble-border: #e8ecf4;
+  --ai-bubble-shadow: rgba(108, 59, 235, 0.02);
+
+  /* Misc */
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-thumb-hover: #94a3b8;
+  --skeleton-bg: #e8ecf4;
+  --danger: #ef4444;
+  --danger-bg: #fef2f2;
+  --success-bg: #f0fdf4;
 }
 
+/* ── Dark Mode ────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg-primary: #000000;
+  --bg-surface: #0a0a0a;
+  --bg-surface-raised: #121212;
+  --bg-sidebar: #000000;
+  --bg-input: #0e0e0e;
+  --bg-hover: #181818;
+
+  --text-primary: #f5f5f5;
+  --text-secondary: #a3a3a3;
+  --text-muted: #525252;
+  --text-on-accent: #ffffff;
+
+  --border: #1a1a1a;
+  --border-subtle: #121212;
+
+  --accent: #8b6cf7;
+  --accent-hover: #a78bfa;
+  --accent-light: #a78bfa;
+  --accent-bg: transparent;
+  --accent-border: #1a1a1a;
+  --accent-shadow: rgba(0, 0, 0, 0);
+
+  --user-bubble: #262626;
+  --user-bubble-hover: #1f1f1f;
+  --ai-bubble-bg: #0a0a0a;
+  --ai-bubble-border: #1a1a1a;
+  --ai-bubble-shadow: rgba(0, 0, 0, 0);
+
+  --scrollbar-thumb: #262626;
+  --scrollbar-thumb-hover: #404040;
+  --skeleton-bg: #121212;
+  --danger: #ef4444;
+  --danger-bg: rgba(239, 68, 68, 0.1);
+  --success-bg: rgba(34, 197, 94, 0.1);
+}
+
+/* ═══════════════════════════════════════════════════════
+   BASE STYLES
+   ═══════════════════════════════════════════════════════ */
+
 body {
-  background: var(--surface);
+  background: var(--bg-primary);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Beautiful soft purple-blue gradient background matching Screenshot 1 */
-.screenshot-bg {
-  background-color: #f3f5fa;
-  background-image: 
-    radial-gradient(at 0% 0%, rgba(224, 231, 255, 0.4) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(245, 243, 255, 0.3) 0px, transparent 50%),
-    radial-gradient(at 50% 100%, rgba(232, 240, 254, 0.4) 0px, transparent 50%);
+/* App background with subtle radial gradient */
+.app-bg {
+  background-color: var(--bg-primary);
+  background-image:
+    radial-gradient(at 0% 0%, var(--accent-bg) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, var(--accent-bg) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, var(--accent-bg) 0px, transparent 50%);
 }
 
-/* Rounded card matching Screenshot 1 */
-.card-premium {
-  background: #ffffff;
-  border: 1px solid rgba(232, 236, 244, 0.8);
-  box-shadow: 0 10px 30px -5px rgba(26, 35, 126, 0.03), 0 1px 3px 0 rgba(0, 0, 0, 0.01);
+/* Premium card surface */
+.card-surface {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 30px -5px var(--accent-shadow), 0 1px 3px 0 rgba(0, 0, 0, 0.01);
 }
+
+/* ═══════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════ */
 
 /* Recording waveform animation */
 @keyframes rhythm-wave {
@@ -60,7 +140,23 @@ body {
   animation: pulse-soft 1.5s ease-in-out infinite;
 }
 
-/* Thin elegant scrollbars */
+/* Thinking shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.thinking-shimmer {
+  background: linear-gradient(90deg, var(--text-muted) 25%, var(--text-secondary) 50%, var(--text-muted) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ═══════════════════════════════════════════════════════
+   SCROLLBARS
+   ═══════════════════════════════════════════════════════ */
+
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -69,14 +165,17 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--scrollbar-thumb);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--scrollbar-thumb-hover);
 }
 
-/* Clean transitions */
+/* ═══════════════════════════════════════════════════════
+   GLOBAL TRANSITIONS
+   ═══════════════════════════════════════════════════════ */
+
 * {
   transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform;
   transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);

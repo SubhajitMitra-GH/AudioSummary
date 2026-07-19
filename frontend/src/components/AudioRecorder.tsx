@@ -3,6 +3,7 @@
 import React, { useState, useRef } from 'react';
 import { Mic, Square, Play, Pause, Upload, Link2, Loader2, ArrowRight, AudioLines } from 'lucide-react';
 import { supabase } from '../utils/supabase';
+import { encryptText } from '../utils/crypto';
 
 interface AudioRecorderProps {
   onIngestSuccess: (sessionId: string, transcript: string) => void;
@@ -106,6 +107,7 @@ export default function AudioRecorder({
     try {
       const { data: { session: sAuth } } = await supabase.auth.getSession();
       const token = sAuth?.access_token;
+      const user = sAuth?.user;
 
       const res = await fetch('http://localhost:8000/upload', {
         method: 'POST',
@@ -116,10 +118,28 @@ export default function AudioRecorder({
       });
       if (!res.ok) throw new Error(`Status ${res.status}`);
       const result = await res.json();
+
+      if (!currentSessionId) {
+        // Pre-create the session via mediator API so keys exist locally and in cloud
+        const rawTitle = `Session ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        const sRes = await fetch('http://localhost:8000/sessions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            id: sessionId,
+            session_title: encryptText(rawTitle)
+          })
+        });
+        if (!sRes.ok) throw new Error(`Could not initialize session: status ${sRes.status}`);
+      }
+
       onIngestSuccess(sessionId, result.transcript);
       resetRecorder();
-    } catch {
-      alert('RAG ingestion failed. Make sure your local Python server is running.');
+    } catch (e: any) {
+      alert(`RAG ingestion failed: ${e.message || 'Make sure your local Python server is running.'}`);
       setRecordState('ready');
     }
   };
@@ -131,6 +151,7 @@ export default function AudioRecorder({
     try {
       const { data: { session: sAuth } } = await supabase.auth.getSession();
       const token = sAuth?.access_token;
+      const user = sAuth?.user;
 
       const res = await fetch('http://localhost:8000/upload-link', {
         method: 'POST',
@@ -145,6 +166,24 @@ export default function AudioRecorder({
         throw new Error(d.detail || `Status ${res.status}`);
       }
       const result = await res.json();
+
+      if (!currentSessionId) {
+        // Pre-create the session via mediator API so keys exist locally and in cloud
+        const rawTitle = `Session ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        const sRes = await fetch('http://localhost:8000/sessions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            id: sessionId,
+            session_title: encryptText(rawTitle)
+          })
+        });
+        if (!sRes.ok) throw new Error(`Could not initialize session: status ${sRes.status}`);
+      }
+
       onIngestSuccess(sessionId, result.transcript);
       resetRecorder();
     } catch (e) {
@@ -175,13 +214,15 @@ export default function AudioRecorder({
   if (variant === 'compact') {
     return (
       <div className="w-full flex flex-col gap-3">
-        {/* Floating Top Pill Bar matching Screenshot 2 */}
-        <div className="w-full bg-white border border-[#e8ecf4] shadow-[0_2px_12px_rgba(26,35,126,0.02)] rounded-full px-5 py-2.5 flex items-center justify-between">
+        {/* Floating Top Pill Bar */}
+        <div className="w-full rounded-full px-5 py-2.5 flex items-center justify-between"
+          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', boxShadow: '0 2px 12px var(--accent-shadow)' }}>
           {/* Left: Current Source Tag */}
           <div className="flex items-center gap-2.5 min-w-0">
-            <AudioLines className="w-4 h-4 text-[#1a237e] shrink-0" />
-            <span className="text-xs text-slate-500 font-semibold shrink-0">Current Source:</span>
-            <span className="bg-[#f0f4ff] text-[#1a237e] border border-indigo-100/60 px-3 py-1 rounded-full text-[11px] font-bold font-mono truncate max-w-[220px]">
+            <AudioLines className="w-4 h-4 shrink-0" style={{ color: 'var(--accent)' }} />
+            <span className="text-xs font-semibold shrink-0" style={{ color: 'var(--text-secondary)' }}>Current Source:</span>
+            <span className="px-3 py-1 rounded-full text-[11px] font-bold font-mono truncate max-w-[220px]"
+              style={{ background: 'var(--accent-bg)', color: 'var(--accent)', border: '1px solid var(--accent-border)' }}>
               {sessionTitle}
             </span>
           </div>
@@ -198,11 +239,11 @@ export default function AudioRecorder({
                 <button
                   key={tab}
                   onClick={() => toggleTab(tab)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full transition-all cursor-pointer ${
-                    isOn
-                      ? 'bg-slate-100 text-[#1a237e]'
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full transition-all cursor-pointer"
+                  style={{
+                    background: isOn ? 'var(--bg-hover)' : 'transparent',
+                    color: isOn ? 'var(--accent)' : 'var(--text-secondary)',
+                  }}
                 >
                   {icon}
                   <span>{label}</span>
@@ -214,7 +255,8 @@ export default function AudioRecorder({
 
         {/* Input panels aligned below the bar */}
         {activeTab && (
-          <div className="bg-slate-50/80 border border-[#e8ecf4] rounded-2xl p-4 flex items-center gap-3 w-full shadow-sm">
+          <div className="rounded-2xl p-4 flex items-center gap-3 w-full shadow-sm"
+            style={{ background: 'var(--bg-surface-raised)', border: '1px solid var(--border)' }}>
             {activeTab === 'record' && (
               <div className="flex items-center justify-between w-full">
                 <div className="flex items-center gap-3">
@@ -225,10 +267,10 @@ export default function AudioRecorder({
                       ))}
                     </div>
                   )}
-                  <span className="text-xs font-semibold text-slate-700 font-mono">
+                  <span className="text-xs font-semibold font-mono" style={{ color: 'var(--text-primary)' }}>
                     {recordState === 'idle' ? '00:00' : recordState === 'ready' ? 'Captured' : fmt(recordingTime)}
                   </span>
-                  <span className="text-[11px] text-slate-400 font-medium">
+                  <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>
                     {recordState === 'idle' && 'Microphone ready'}
                     {recordState === 'recording' && 'Recording live'}
                     {recordState === 'paused' && 'Recording paused'}
@@ -243,37 +285,30 @@ export default function AudioRecorder({
                   )}
                   {recordState === 'recording' && (
                     <>
-                      <button onClick={pauseRecording} className="text-xs font-semibold bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-full cursor-pointer">
-                        Pause
-                      </button>
-                      <button onClick={stopRecording} className="text-xs font-semibold bg-[#1a237e] text-white px-3 py-1.5 rounded-full cursor-pointer">
-                        Stop
-                      </button>
+                      <button onClick={pauseRecording} className="text-xs font-semibold px-3 py-1.5 rounded-full cursor-pointer"
+                        style={{ background: 'var(--bg-hover)', color: 'var(--text-primary)' }}>Pause</button>
+                      <button onClick={stopRecording} className="text-xs font-semibold text-white px-3 py-1.5 rounded-full cursor-pointer"
+                        style={{ background: 'var(--accent)' }}>Stop</button>
                     </>
                   )}
                   {recordState === 'paused' && (
                     <>
-                      <button onClick={resumeRecording} className="text-xs font-semibold bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-full cursor-pointer">
-                        Resume
-                      </button>
-                      <button onClick={stopRecording} className="text-xs font-semibold bg-[#1a237e] text-white px-3 py-1.5 rounded-full cursor-pointer">
-                        Stop
-                      </button>
+                      <button onClick={resumeRecording} className="text-xs font-semibold px-3 py-1.5 rounded-full cursor-pointer"
+                        style={{ background: 'var(--bg-hover)', color: 'var(--text-primary)' }}>Resume</button>
+                      <button onClick={stopRecording} className="text-xs font-semibold text-white px-3 py-1.5 rounded-full cursor-pointer"
+                        style={{ background: 'var(--accent)' }}>Stop</button>
                     </>
                   )}
                   {recordState === 'ready' && (
                     <>
-                      <button onClick={submitIngestion} className="text-xs font-semibold bg-[#1a237e] hover:bg-[#121b74] text-white px-4 py-1.5 rounded-full shadow-sm cursor-pointer">
-                        Add to Context
-                      </button>
-                      <button onClick={resetRecorder} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
-                        ✕
-                      </button>
+                      <button onClick={submitIngestion} className="text-xs font-semibold text-white px-4 py-1.5 rounded-full shadow-sm cursor-pointer"
+                        style={{ background: 'var(--accent)' }}>Add to Context</button>
+                      <button onClick={resetRecorder} className="p-1 cursor-pointer" style={{ color: 'var(--text-muted)' }}>✕</button>
                     </>
                   )}
                   {recordState === 'processing' && (
-                    <span className="flex items-center gap-1.5 text-xs text-slate-400 font-semibold animate-pulse">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#1a237e]" /> Ingesting...
+                    <span className="flex items-center gap-1.5 text-xs font-semibold animate-pulse" style={{ color: 'var(--text-muted)' }}>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: 'var(--accent)' }} /> Ingesting...
                     </span>
                   )}
                 </div>
@@ -284,29 +319,27 @@ export default function AudioRecorder({
               <div className="flex items-center justify-between w-full">
                 {uploadFile ? (
                   <div className="flex items-center justify-between w-full">
-                    <span className="text-xs font-semibold text-slate-700 truncate max-w-[280px]">
+                    <span className="text-xs font-semibold truncate max-w-[280px]" style={{ color: 'var(--text-primary)' }}>
                       {uploadFile.name}
                     </span>
                     <div className="flex items-center gap-2">
                       {recordState === 'processing' ? (
-                        <span className="flex items-center gap-1.5 text-xs text-slate-400 font-semibold animate-pulse">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#1a237e]" /> Indexing...
+                        <span className="flex items-center gap-1.5 text-xs font-semibold animate-pulse" style={{ color: 'var(--text-muted)' }}>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: 'var(--accent)' }} /> Indexing...
                         </span>
                       ) : (
                         <>
-                          <button onClick={submitIngestion} className="text-xs font-semibold bg-[#1a237e] hover:bg-[#121b74] text-white px-4 py-1.5 rounded-full cursor-pointer">
-                            Upload & Index
-                          </button>
-                          <button onClick={resetRecorder} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
-                            ✕
-                          </button>
+                          <button onClick={submitIngestion} className="text-xs font-semibold text-white px-4 py-1.5 rounded-full cursor-pointer"
+                            style={{ background: 'var(--accent)' }}>Upload & Index</button>
+                          <button onClick={resetRecorder} className="p-1 cursor-pointer" style={{ color: 'var(--text-muted)' }}>✕</button>
                         </>
                       )}
                     </div>
                   </div>
                 ) : (
-                  <div className="relative w-full border border-dashed border-slate-300 hover:border-slate-400 rounded-xl py-2 text-center cursor-pointer transition-colors bg-white">
-                    <span className="text-xs text-slate-500 font-semibold">Click to choose audio file</span>
+                  <div className="relative w-full rounded-xl py-2 text-center cursor-pointer transition-colors"
+                    style={{ border: '1px dashed var(--border)', background: 'var(--bg-surface)' }}>
+                    <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Click to choose audio file</span>
                     <input type="file" accept="audio/*" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" />
                   </div>
                 )}
@@ -314,32 +347,33 @@ export default function AudioRecorder({
             )}
 
             {activeTab === 'link' && (
-              <div className="flex items-center gap-2 w-full bg-white border border-slate-200/50 rounded-full py-1 pl-4 pr-1">
-                <Link2 className="text-slate-400 w-3.5 h-3.5 mr-1 shrink-0" />
+              <div className="flex items-center gap-2 w-full rounded-full py-1 pl-4 pr-1"
+                style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                <Link2 className="w-3.5 h-3.5 mr-1 shrink-0" style={{ color: 'var(--text-muted)' }} />
                 <input
                   type="text"
                   value={linkUrl}
                   onChange={(e) => setLinkUrl(e.target.value)}
                   disabled={recordState === 'processing'}
                   placeholder="Paste YouTube or audio link..."
-                  className="flex-1 text-xs bg-transparent outline-none placeholder-slate-400 text-slate-800 transition-all py-1.5"
+                  className="flex-1 text-xs bg-transparent outline-none py-1.5"
+                  style={{ color: 'var(--text-primary)' }}
                 />
                 {recordState === 'processing' ? (
-                  <span className="flex items-center gap-1.5 text-xs text-slate-400 font-semibold animate-pulse shrink-0 px-2">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[#1a237e]" /> Ingesting...
+                  <span className="flex items-center gap-1.5 text-xs font-semibold animate-pulse shrink-0 px-2" style={{ color: 'var(--text-muted)' }}>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: 'var(--accent)' }} /> Ingesting...
                   </span>
                 ) : (
                   <div className="flex items-center gap-1">
                     <button
                       onClick={submitLinkIngestion}
                       disabled={!linkUrl.trim()}
-                      className="text-xs font-semibold bg-[#1a237e] hover:bg-[#121b74] text-white px-4 py-1.5 rounded-full disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer animate-fade-in"
+                      className="text-xs font-semibold text-white px-4 py-1.5 rounded-full disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer animate-fade-in"
+                      style={{ background: 'var(--accent)' }}
                     >
                       Fetch
                     </button>
-                    <button onClick={resetRecorder} className="text-slate-400 hover:text-slate-600 p-2 cursor-pointer">
-                      ✕
-                    </button>
+                    <button onClick={resetRecorder} className="p-2 cursor-pointer" style={{ color: 'var(--text-muted)' }}>✕</button>
                   </div>
                 )}
               </div>
@@ -355,19 +389,22 @@ export default function AudioRecorder({
     <div className="w-full max-w-3xl mx-auto flex flex-col gap-6 select-none py-6 px-6">
       {/* Hero Header */}
       <div className="text-center max-w-xl mx-auto">
-        <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-[#1a237e] mb-2">
+        <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-2"
+          style={{ color: 'var(--accent)' }}>
           Ingest & Query Audio
         </h2>
-        <p className="text-slate-500 text-sm leading-relaxed">
+        <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
           Convert your spoken ideas into a searchable knowledge base. Securely index podcasts, meetings, and voice notes with on-device AI.
         </p>
       </div>
 
-      {/* Main card panel matching Screenshot 1 */}
-      <div className="w-full bg-white rounded-[2.5rem] border border-slate-100 shadow-[0_12px_40px_rgba(26,35,126,0.03)] p-6 md:p-8 flex flex-col items-center gap-6 relative overflow-hidden">
+      {/* Main card panel */}
+      <div className="w-full rounded-[2.5rem] p-6 md:p-8 flex flex-col items-center gap-6 relative overflow-hidden"
+        style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', boxShadow: '0 12px 40px var(--accent-shadow)' }}>
         
-        {/* Segmented controls matching Screenshot 1 */}
-        <div className="bg-slate-50 border border-slate-200/50 rounded-full p-1.5 flex items-center justify-between gap-1 w-full max-w-md mx-auto">
+        {/* Segmented controls */}
+        <div className="rounded-full p-1.5 flex items-center justify-between gap-1 w-full max-w-md mx-auto"
+          style={{ background: 'var(--bg-input)', border: '1px solid var(--border)' }}>
           {([
             { tab: 'link' as Tab, icon: <Link2 className="w-3.5 h-3.5" />, label: 'Fetch Web Link' },
             { tab: 'upload' as Tab, icon: <Upload className="w-3.5 h-3.5" />, label: 'Upload Audio' },
@@ -378,11 +415,13 @@ export default function AudioRecorder({
               <button
                 key={tab}
                 onClick={() => toggleTab(tab)}
-                className={`flex items-center justify-center gap-2 px-4 py-2.5 text-[11.5px] font-semibold rounded-full transition-all cursor-pointer flex-1 ${
-                  isSelected
-                    ? 'bg-white text-slate-800 shadow-sm border border-slate-200/40'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 text-[11.5px] font-semibold rounded-full transition-all cursor-pointer flex-1"
+                style={{
+                  background: isSelected ? 'var(--bg-surface)' : 'transparent',
+                  color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  boxShadow: isSelected ? '0 1px 3px rgba(0,0,0,0.05)' : 'none',
+                  border: isSelected ? '1px solid var(--border)' : '1px solid transparent',
+                }}
               >
                 {icon}
                 <span>{label}</span>
@@ -396,76 +435,79 @@ export default function AudioRecorder({
           {/* Link Panel */}
           {activeTab === 'link' && (
             <div className="w-full flex flex-col items-center gap-6">
-              {/* Pill-shaped Link Bar matching Screenshot 1 */}
-              <div className="bg-[#f4f6fc]/80 border border-slate-200/50 rounded-full py-1.5 pl-6 pr-2.5 flex items-center justify-between w-full max-w-xl mx-auto focus-within:border-[#1a237e]/40 focus-within:ring-2 focus-within:ring-indigo-50 transition-all">
-                <Link2 className="text-slate-400 w-4 h-4 mr-3 shrink-0" />
+              {/* Pill-shaped Link Bar */}
+              <div className="rounded-full py-1.5 pl-6 pr-2.5 flex items-center justify-between w-full max-w-xl mx-auto transition-all"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border)' }}>
+                <Link2 className="w-4 h-4 mr-3 shrink-0" style={{ color: 'var(--text-muted)' }} />
                 <input
                   type="text"
                   value={linkUrl}
                   onChange={(e) => setLinkUrl(e.target.value)}
                   disabled={recordState === 'processing'}
                   placeholder="Paste a podcast, YouTube, or audio link..."
-                  className="bg-transparent text-[13.5px] w-full outline-none placeholder-slate-400 text-slate-800 py-1.5"
+                  className="bg-transparent text-[13.5px] w-full outline-none py-1.5"
+                  style={{ color: 'var(--text-primary)' }}
                 />
                 <button
                   onClick={submitLinkIngestion}
                   disabled={!linkUrl.trim() || recordState === 'processing'}
-                  className="bg-[#1a237e] hover:bg-[#121b74] text-white font-semibold text-xs px-5 py-3 rounded-full flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm active:scale-95 shrink-0 ml-2"
+                  className="font-semibold text-xs px-5 py-3 rounded-full flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm active:scale-95 shrink-0 ml-2"
+                  style={{ background: 'var(--accent)', color: 'var(--text-on-accent)' }}
                 >
                   {recordState === 'processing' ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Ingesting...
-                    </>
+                    <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Ingesting...</>
                   ) : (
-                    <>
-                      Analyze <ArrowRight className="w-3.5 h-3.5" />
-                    </>
+                    <>Analyze <ArrowRight className="w-3.5 h-3.5" /></>
                   )}
                 </button>
               </div>
 
               {/* Supported Text */}
-              <p className="text-[10px] tracking-[0.15em] font-bold text-slate-400 text-center w-full mt-2 uppercase">
+              <p className="text-[10px] tracking-[0.15em] font-bold text-center w-full mt-2 uppercase"
+                style={{ color: 'var(--text-muted)' }}>
                 SUPPORTED: MP3 • WAV • M4A • YOUTUBE • SPOTIFY • DIRECT LINKS
               </p>
             </div>
           )}
 
-          {/* Upload Panel matching Screenshot 4 */}
+          {/* Upload Panel */}
           {activeTab === 'upload' && (
             <div className="w-full flex flex-col items-center gap-5">
               <div className="text-center mb-1">
-                <h3 className="text-lg font-bold text-slate-800">Populate Workspace</h3>
-                <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed mt-1">
+                <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Populate Workspace</h3>
+                <p className="text-xs max-w-md mx-auto leading-relaxed mt-1" style={{ color: 'var(--text-secondary)' }}>
                   Upload your audio recordings to begin the RAG processing. Our engine will transcribe, index, and prepare your data for high-fidelity retrieval.
                 </p>
               </div>
 
               {uploadFile ? (
-                <div className="bg-slate-50 border border-slate-200/50 rounded-2xl p-5 max-w-md mx-auto flex items-center justify-between w-full shadow-sm">
+                <div className="rounded-2xl p-5 max-w-md mx-auto flex items-center justify-between w-full shadow-sm"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border)' }}>
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold text-slate-800 truncate max-w-[280px]">
+                    <p className="text-xs font-semibold truncate max-w-[280px]" style={{ color: 'var(--text-primary)' }}>
                       {uploadFile.name}
                     </p>
-                    <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                    <p className="text-[10px] mt-0.5 font-medium" style={{ color: 'var(--text-muted)' }}>
                       {(uploadFile.size / 1048576).toFixed(2)} MB
                     </p>
                   </div>
                   {recordState === 'processing' ? (
-                    <div className="flex items-center gap-1.5 text-slate-500 text-xs font-semibold animate-pulse">
-                      <Loader2 className="w-4 h-4 animate-spin text-[#1a237e]" /> Ingesting...
+                    <div className="flex items-center gap-1.5 text-xs font-semibold animate-pulse" style={{ color: 'var(--text-secondary)' }}>
+                      <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--accent)' }} /> Ingesting...
                     </div>
                   ) : (
                     <div className="flex gap-2">
                       <button
                         onClick={submitIngestion}
-                        className="bg-[#1a237e] hover:bg-[#121b74] text-white text-xs font-semibold px-4 py-2 rounded-full cursor-pointer shadow-sm active:scale-95"
+                        className="text-white text-xs font-semibold px-4 py-2 rounded-full cursor-pointer shadow-sm active:scale-95"
+                        style={{ background: 'var(--accent)' }}
                       >
                         Ingest File
                       </button>
                       <button
                         onClick={resetRecorder}
-                        className="bg-slate-100 text-slate-600 hover:bg-slate-200 text-xs font-semibold px-3 py-2 rounded-full cursor-pointer"
+                        className="text-xs font-semibold px-3 py-2 rounded-full cursor-pointer"
+                        style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}
                       >
                         ✕
                       </button>
@@ -473,35 +515,40 @@ export default function AudioRecorder({
                   )}
                 </div>
               ) : (
-                <div className="relative w-full max-w-xl mx-auto border-2 border-dashed border-[#d5dbec] hover:border-indigo-400 bg-[#f9fafc]/50 hover:bg-[#f9fafc] rounded-[2rem] p-6 text-center flex flex-col items-center gap-3 transition-all group cursor-pointer">
+                <div className="relative w-full max-w-xl mx-auto border-2 border-dashed rounded-[2rem] p-6 text-center flex flex-col items-center gap-3 transition-all group cursor-pointer"
+                  style={{ borderColor: 'var(--border)', background: 'var(--bg-input)' }}>
                   {/* Upload Graphic */}
-                  <div className="w-14 h-14 rounded-full bg-[#f4f6fc] flex items-center justify-center relative">
-                    <div className="w-10 h-10 rounded-xl bg-white shadow-md flex items-center justify-center border border-slate-100">
-                      <Upload className="w-4.5 h-4.5 text-[#1a237e]" />
+                  <div className="w-14 h-14 rounded-full flex items-center justify-center relative"
+                    style={{ background: 'var(--accent-bg)' }}>
+                    <div className="w-10 h-10 rounded-xl shadow-md flex items-center justify-center"
+                      style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                      <Upload className="w-4.5 h-4.5" style={{ color: 'var(--accent)' }} />
                     </div>
                   </div>
 
                   <div>
-                    <p className="font-bold text-slate-800 text-sm">Drag and drop audio files</p>
-                    <p className="text-[11px] text-slate-400 max-w-xs mx-auto mt-1 leading-normal">
+                    <p className="font-bold text-sm" style={{ color: 'var(--text-primary)' }}>Drag and drop audio files</p>
+                    <p className="text-[11px] max-w-xs mx-auto mt-1 leading-normal" style={{ color: 'var(--text-muted)' }}>
                       Your files will be encrypted at rest and processed using our proprietary acoustic model.
                     </p>
                   </div>
 
-                  <button className="bg-[#1a237e] hover:bg-[#121b74] text-white px-5 py-2.5 rounded-full text-xs font-semibold shadow-sm flex items-center gap-1.5 cursor-pointer mt-1 pointer-events-none">
+                  <button className="text-white px-5 py-2.5 rounded-full text-xs font-semibold shadow-sm flex items-center gap-1.5 cursor-pointer mt-1 pointer-events-none"
+                    style={{ background: 'var(--accent)' }}>
                     <Upload className="w-3.5 h-3.5" /> Select File from Desktop
                   </button>
 
                   <div className="flex flex-col items-center gap-1 mt-2">
-                    <span className="text-[9px] font-bold tracking-wider text-slate-400 uppercase">SUPPORTED FORMATS</span>
+                    <span className="text-[9px] font-bold tracking-wider uppercase" style={{ color: 'var(--text-muted)' }}>SUPPORTED FORMATS</span>
                     <div className="flex items-center gap-1.5 mt-1">
-                      {['MP3', 'WAV', 'WEBM', 'M4A', 'FLAC'].map((fmt) => (
-                        <span key={fmt} className="text-[9.5px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
-                          {fmt}
+                      {['MP3', 'WAV', 'WEBM', 'M4A', 'FLAC'].map((f) => (
+                        <span key={f} className="text-[9.5px] font-bold px-2 py-0.5 rounded-md"
+                          style={{ color: 'var(--text-secondary)', background: 'var(--bg-hover)' }}>
+                          {f}
                         </span>
                       ))}
                     </div>
-                    <span className="text-[9px] font-semibold text-slate-400 mt-1">MAX 50MB PER FILE</span>
+                    <span className="text-[9px] font-semibold mt-1" style={{ color: 'var(--text-muted)' }}>MAX 50MB PER FILE</span>
                   </div>
 
                   <input type="file" accept="audio/*" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" />
@@ -514,15 +561,16 @@ export default function AudioRecorder({
           {activeTab === 'record' && (
             <div className="w-full flex flex-col items-center gap-5">
               <div className="text-center mb-1">
-                <h3 className="text-lg font-bold text-slate-800">Voice Recording</h3>
-                <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed mt-1">
+                <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Voice Recording</h3>
+                <p className="text-xs max-w-md mx-auto leading-relaxed mt-1" style={{ color: 'var(--text-secondary)' }}>
                   Record live speech directly from your browser. The stream will be transcribed and indexed locally.
                 </p>
               </div>
 
-              <div className="w-full max-w-xl mx-auto border border-slate-200/50 bg-[#f9fafc]/50 rounded-[2rem] p-6 flex flex-col items-center gap-4">
+              <div className="w-full max-w-xl mx-auto rounded-[2rem] p-6 flex flex-col items-center gap-4"
+                style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
                 <div className="flex flex-col items-center gap-2">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
                     {recordState === 'idle' && 'Microphone Ready'}
                     {recordState === 'recording' && 'Recording Audio'}
                     {recordState === 'paused' && 'Recording Paused'}
@@ -530,14 +578,14 @@ export default function AudioRecorder({
                     {recordState === 'processing' && 'RAG Indexing...'}
                   </span>
                   
-                  <span className="text-3xl font-bold text-slate-800 font-mono tracking-tight my-1">
+                  <span className="text-3xl font-bold font-mono tracking-tight my-1" style={{ color: 'var(--text-primary)' }}>
                     {fmt(recordingTime)}
                   </span>
 
                   {recordState === 'recording' && (
                     <div className="flex items-center gap-[3px] h-3.5 mt-1">
                       {[...Array(5)].map((_, i) => (
-                        <div key={i} className="w-[2.5px] h-4 bg-[#1a237e] rounded-full wave-line" />
+                        <div key={i} className="w-[2.5px] h-4 rounded-full wave-line" style={{ background: 'var(--accent)' }} />
                       ))}
                     </div>
                   )}
@@ -547,47 +595,44 @@ export default function AudioRecorder({
                   {recordState === 'idle' && (
                     <button
                       onClick={startRecording}
-                      className="bg-[#1a237e] hover:bg-[#121b74] text-white font-semibold py-2.5 px-6 rounded-full text-xs cursor-pointer flex items-center gap-2 active:scale-95 transition-all shadow-sm"
+                      className="font-semibold py-2.5 px-6 rounded-full text-xs cursor-pointer flex items-center gap-2 active:scale-95 transition-all shadow-sm"
+                      style={{ background: 'var(--accent)', color: 'var(--text-on-accent)' }}
                     >
                       <Mic className="w-3.5 h-3.5" /> Start Recording
                     </button>
                   )}
                   {recordState === 'recording' && (
                     <>
-                      <button onClick={pauseRecording} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-2 px-4 rounded-full text-xs cursor-pointer">
-                        Pause
-                      </button>
-                      <button onClick={stopRecording} className="bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 px-4 rounded-full text-xs cursor-pointer">
-                        Stop
-                      </button>
+                      <button onClick={pauseRecording} className="font-semibold py-2 px-4 rounded-full text-xs cursor-pointer"
+                        style={{ background: 'var(--bg-hover)', color: 'var(--text-primary)' }}>Pause</button>
+                      <button onClick={stopRecording} className="font-semibold py-2 px-4 rounded-full text-xs cursor-pointer text-white"
+                        style={{ background: 'var(--text-primary)' }}>Stop</button>
                     </>
                   )}
                   {recordState === 'paused' && (
                     <>
-                      <button onClick={resumeRecording} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-2 px-4 rounded-full text-xs cursor-pointer">
-                        Resume
-                      </button>
-                      <button onClick={stopRecording} className="bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 px-4 rounded-full text-xs cursor-pointer">
-                        Stop
-                      </button>
+                      <button onClick={resumeRecording} className="font-semibold py-2 px-4 rounded-full text-xs cursor-pointer"
+                        style={{ background: 'var(--bg-hover)', color: 'var(--text-primary)' }}>Resume</button>
+                      <button onClick={stopRecording} className="font-semibold py-2 px-4 rounded-full text-xs cursor-pointer text-white"
+                        style={{ background: 'var(--text-primary)' }}>Stop</button>
                     </>
                   )}
                   {recordState === 'ready' && (
                     <>
                       <button
                         onClick={submitIngestion}
-                        className="bg-[#1a237e] hover:bg-[#121b74] text-white font-semibold py-2.5 px-6 rounded-full text-xs shadow-sm cursor-pointer transition-all flex items-center gap-1.5"
+                        className="font-semibold py-2.5 px-6 rounded-full text-xs shadow-sm cursor-pointer transition-all flex items-center gap-1.5"
+                        style={{ background: 'var(--accent)', color: 'var(--text-on-accent)' }}
                       >
                         Ingest Recording <ArrowRight className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={resetRecorder} className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold py-2.5 px-4 rounded-full text-xs cursor-pointer">
-                        Discard
-                      </button>
+                      <button onClick={resetRecorder} className="font-semibold py-2.5 px-4 rounded-full text-xs cursor-pointer"
+                        style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}>Discard</button>
                     </>
                   )}
                   {recordState === 'processing' && (
-                    <div className="flex items-center gap-2 text-slate-500 text-xs font-semibold animate-pulse">
-                      <Loader2 className="w-4 h-4 animate-spin text-[#1a237e]" /> Indexing stream...
+                    <div className="flex items-center gap-2 text-xs font-semibold animate-pulse" style={{ color: 'var(--text-secondary)' }}>
+                      <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--accent)' }} /> Indexing stream...
                     </div>
                   )}
                 </div>

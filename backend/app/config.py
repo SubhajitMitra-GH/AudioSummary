@@ -8,9 +8,10 @@ class Settings(BaseSettings):
     redis_password: Optional[str] = None
     port: int = 8000
     host: str = "0.0.0.0"
-    llm_model: str = "llama3"
+    llm_model: str = "mistral"
     supabase_url: str = ""
     supabase_anon_key: str = ""
+    backend_encryption_key: str = "default-fallback-key-for-transcripts-112233"
 
     model_config = SettingsConfigDict(
         env_file=".env",
