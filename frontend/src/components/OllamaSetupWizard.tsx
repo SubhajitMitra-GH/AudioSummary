@@ -1,7 +1,21 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Cpu, Download, Loader2, RefreshCw, CheckCircle, AlertTriangle, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Cpu, Download, Loader2, RefreshCw, AlertTriangle, ArrowRight } from 'lucide-react';
+import { API_BASE, apiFetch, readErrorDetail } from '../utils/api';
+
+type InstallState = 'idle' | 'downloading' | 'extracting' | 'starting' | 'error';
+
+// One line of Ollama's NDJSON pull stream (or an error line from our backend).
+interface PullLine {
+  status?: string;
+  message?: string;
+  error?: string;
+  completed?: number;
+  total?: number;
+}
+
+const errorText = (err: unknown, fallback: string) => (err instanceof Error ? err.message : fallback);
 
 interface OllamaStatus {
   ollama_running: boolean;
@@ -15,7 +29,7 @@ interface OllamaSetupWizardProps {
 }
 
 export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWizardProps) {
-  const [installState, setInstallState] = useState<'idle' | 'downloading' | 'extracting' | 'starting' | 'error'>('idle');
+  const [installState, setInstallState] = useState<InstallState>('idle');
   const [installProgress, setInstallProgress] = useState(0);
   const [installError, setInstallError] = useState<string | null>(null);
 
@@ -23,32 +37,41 @@ export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWiz
   const [pullProgress, setPullProgress] = useState(0);
   const [pullStatus, setPullStatus] = useState<string>('');
   const [pullDetails, setPullDetails] = useState<string>('');
+  const [pullError, setPullError] = useState<string | null>(null);
 
   const [verifying, setVerifying] = useState(false);
 
-  // Poll local installation status if we triggered auto-install
+  const handleVerify = useCallback(() => {
+    setVerifying(true);
+    // Give backend a second to verify status
+    setTimeout(() => {
+      onComplete();
+      setVerifying(false);
+    }, 1500);
+  }, [onComplete]);
+
+  // Poll local installation status while an auto-install is running
   useEffect(() => {
     if (installState === 'idle' || installState === 'error') return;
 
-    let intervalId = setInterval(async () => {
+    const intervalId = setInterval(async () => {
       try {
-        const res = await fetch('http://localhost:8000/ollama/install/status');
-        if (res.ok) {
-          const data = await res.json();
-          // Map backend states
-          if (data.status.startsWith('error')) {
-            setInstallState('error');
-            setInstallError(data.status.replace('error: ', ''));
-            clearInterval(intervalId);
-          } else if (data.status === 'completed') {
-            setInstallState('idle');
-            setInstallProgress(100);
-            clearInterval(intervalId);
-            handleVerify();
-          } else {
-            setInstallState(data.status);
-            setInstallProgress(data.progress);
-          }
+        const res = await fetch(`${API_BASE}/ollama/install/status`);
+        if (!res.ok) return;
+        const data: { status: string; progress: number } = await res.json();
+        if (data.status.startsWith('error')) {
+          clearInterval(intervalId);
+          setInstallState('error');
+          setInstallError(data.status.replace(/^error:\s*/, ''));
+        } else if (data.status === 'completed' || data.status === 'launched') {
+          // 'launched' = installed and opened but not answering yet; re-checking status decides.
+          clearInterval(intervalId);
+          setInstallState('idle');
+          setInstallProgress(100);
+          handleVerify();
+        } else if (data.status !== 'idle') {
+          setInstallState(data.status as InstallState);
+          setInstallProgress(data.progress);
         }
       } catch (err) {
         console.error('Error checking install status:', err);
@@ -56,90 +79,83 @@ export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWiz
     }, 1000);
 
     return () => clearInterval(intervalId);
-  }, [installState]);
+  }, [installState, handleVerify]);
 
   const handleAutoInstall = async () => {
     setInstallState('downloading');
     setInstallProgress(0);
     setInstallError(null);
     try {
-      const res = await fetch('http://localhost:8000/ollama/install', { method: 'POST' });
-      if (!res.ok) throw new Error('Failed to trigger installation.');
-    } catch (err: any) {
+      const res = await apiFetch('/ollama/install', { method: 'POST' });
+      if (!res.ok) throw new Error(await readErrorDetail(res));
+    } catch (err) {
       setInstallState('error');
-      setInstallError(err.message || 'Failed to trigger installation.');
+      setInstallError(errorText(err, 'Failed to trigger installation.'));
     }
-  };
-
-  const handleVerify = async () => {
-    setVerifying(true);
-    // Give backend a second to verify status
-    setTimeout(() => {
-      onComplete();
-      setVerifying(false);
-    }, 1500);
   };
 
   const handlePullModel = async () => {
     setPulling(true);
     setPullProgress(0);
+    setPullError(null);
     setPullStatus('Connecting to Ollama pull registry...');
     setPullDetails('');
-    
+
     try {
-      const res = await fetch('http://localhost:8000/ollama/pull', { method: 'POST' });
+      const res = await apiFetch('/ollama/pull', { method: 'POST' });
+      if (!res.ok) throw new Error(await readErrorDetail(res));
       if (!res.body) throw new Error('ReadableStream not supported.');
-      
+
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      
       let buffer = '';
-      
+
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        
+
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         // Keep the last partial line in buffer
         buffer = lines.pop() || '';
-        
+
         for (const line of lines) {
           if (!line.trim()) continue;
+          let data: PullLine;
           try {
-            const data = JSON.parse(line);
-            
-            if (data.status === 'error') {
-              throw new Error(data.message || 'Failed to download model.');
-            }
-            
-            setPullStatus(data.status);
-            
-            if (data.completed && data.total) {
-              const pct = (data.completed / data.total) * 100;
-              setPullProgress(Math.round(pct * 10) / 10);
-              
-              const completedGB = (data.completed / (1024 * 1024 * 1024)).toFixed(2);
-              const totalGB = (data.total / (1024 * 1024 * 1024)).toFixed(2);
-              setPullDetails(`${completedGB} GB / ${totalGB} GB`);
-            } else {
-              setPullDetails('');
-            }
-            
-            if (data.status === 'success') {
-              setPullProgress(100);
-              setPulling(false);
-              handleVerify();
-              return;
-            }
-          } catch (err) {
-            // Ignore parse errors of partial lines
+            data = JSON.parse(line);
+          } catch {
+            continue; // not a complete JSON line
+          }
+
+          // Errors are thrown outside the parse try/catch so they are never swallowed.
+          if (data.status === 'error' || data.error) {
+            throw new Error(data.message || data.error || 'Failed to download model.');
+          }
+
+          if (data.status) setPullStatus(data.status);
+
+          if (data.completed && data.total) {
+            setPullProgress(Math.round((data.completed / data.total) * 1000) / 10);
+            const completedGB = (data.completed / (1024 * 1024 * 1024)).toFixed(2);
+            const totalGB = (data.total / (1024 * 1024 * 1024)).toFixed(2);
+            setPullDetails(`${completedGB} GB / ${totalGB} GB`);
+          } else {
+            setPullDetails('');
+          }
+
+          if (data.status === 'success') {
+            setPullProgress(100);
+            setPulling(false);
+            handleVerify();
+            return;
           }
         }
       }
-    } catch (err: any) {
+      throw new Error('The download stopped before it finished. Please try again.');
+    } catch (err) {
       console.error('Pull failed:', err);
-      alert(`Model download failed: ${err.message}`);
+      setPullError(errorText(err, 'Model download failed.'));
       setPulling(false);
     }
   };
@@ -237,12 +253,12 @@ export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWiz
           </div>
           <div>
             <h2 className="text-lg font-bold text-white tracking-tight">AI Model Setup Required</h2>
-            <p className="text-xs text-slate-400 font-semibold tracking-wide mt-0.5">Model: '{status.configured_model}' missing</p>
+            <p className="text-xs text-slate-400 font-semibold tracking-wide mt-0.5">Model &ldquo;{status.configured_model}&rdquo; missing</p>
           </div>
         </div>
 
         <p className="text-xs text-slate-300 leading-relaxed font-medium">
-          Ollama is running successfully, but the local model <strong>{status.configured_model}</strong> (4.1 GB) is not yet downloaded. We need this file to generate answers locally on your Mac.
+          Ollama is running successfully, but the local model <strong>{status.configured_model}</strong> is not yet downloaded. We need this file to generate answers locally on your Mac.
         </p>
 
         {pulling ? (
@@ -269,9 +285,19 @@ export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWiz
               disabled={verifying}
               className="w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-full font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 cursor-pointer active:scale-98 transition-all"
             >
-              Download Local '{status.configured_model}' Model <ArrowRight className="w-4 h-4" />
+              Download Local &ldquo;{status.configured_model}&rdquo; Model <ArrowRight className="w-4 h-4" />
             </button>
-            <span className="text-[10px] text-center font-bold uppercase tracking-wider text-slate-500">Approx. 4.1 GB download size</span>
+            <span className="text-[10px] text-center font-bold uppercase tracking-wider text-slate-500">Download size is several GB</span>
+          </div>
+        )}
+
+        {pullError && (
+          <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-semibold p-4 rounded-xl flex items-start gap-2 animate-fade-in leading-relaxed">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
+            <div>
+              <p className="font-bold">Model Download Failed</p>
+              <p className="text-[11px] text-red-400/80 mt-0.5">{pullError}</p>
+            </div>
           </div>
         )}
       </div>

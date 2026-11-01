@@ -1,8 +1,17 @@
 import CryptoJS from 'crypto-js';
 
-// Secret key used for Zero-Trust Application-Layer Encryption.
-// Uses an environment variable in production, fallback for development.
-const ENCRYPTION_KEY = process.env.NEXT_PUBLIC_ALE_KEY || 'zero-trust-audio-ale-secret-key-998877';
+// Encrypts session titles and chat messages before they are stored and backed up.
+//
+// IMPORTANT: NEXT_PUBLIC_* values are compiled into the app bundle, and this key is the same for
+// every user. It protects data from someone who only obtains the database, NOT from someone who
+// has the app. Per-user keys are needed for real end-to-end privacy.
+// Changing this key makes all previously encrypted titles and messages unreadable.
+const FALLBACK_KEY = 'zero-trust-audio-ale-secret-key-998877';
+const ENCRYPTION_KEY = process.env.NEXT_PUBLIC_ALE_KEY || FALLBACK_KEY;
+
+if (ENCRYPTION_KEY === FALLBACK_KEY && typeof window !== 'undefined') {
+  console.warn('NEXT_PUBLIC_ALE_KEY is not set: using the public built-in encryption key.');
+}
 
 export function encryptText(plaintext: string): string {
   if (!plaintext) return '';

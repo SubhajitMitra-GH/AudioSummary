@@ -53,7 +53,7 @@
         ]
       },
       {
-        "from": "../backend/.env",
+        "from": "../backend/desktop.env",
         "to": "backend-service/.env"
       }
     ],

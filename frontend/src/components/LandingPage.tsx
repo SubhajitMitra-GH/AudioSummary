@@ -16,19 +16,19 @@ export default function LandingPage({ onLaunchApp, showAuth, onCloseAuth }: Land
   const faqs = [
     {
       question: "Is my audio or transcript ever sent to a cloud server?",
-      answer: "No. All speech recognition (transcription) and vector searches happen 100% locally on your computer's hardware. Your transcripts are encrypted using AES-128 before writing to database backups, ensuring zero-trust privacy."
+      answer: "Your audio files never leave your computer: transcription, search and AI answers all run locally. So you can restore your work on another device, transcripts, chat messages and session titles are encrypted and backed up to the cloud (Supabase), together with the search index used to find relevant passages."
     },
     {
-      question: "Can I use the application completely offline?",
-      answer: "Yes! Once you are logged in, you can record audio, analyze transcripts, search the database, and chat with your local AI assistant entirely offline. No internet connection is needed."
+      question: "Can I use the application offline?",
+      answer: "Mostly. Recording, transcription, search and chat all run on your computer. You need an internet connection to sign in, and after a longer time offline you may need to reconnect so your sign-in can be refreshed. YouTube and web links of course need internet."
     },
     {
       question: "Are there any usage limits or query tokens I have to pay for?",
-      answer: "No. Since the models run locally on your own computer using Ollama or llama.cpp, it is completely free with unlimited queries, transcriptions, and database sizes."
+      answer: "No. Since the models run locally on your own computer using Ollama, it is completely free with unlimited queries, transcriptions, and database sizes."
     },
     {
       question: "How does the cloud synchronization work?",
-      answer: "The application is local-first. It caches all sessions and messages in your local Redis Stack database. When you have internet access, a background event-driven worker automatically backs up your changes to Supabase so you can restore them on other devices."
+      answer: "The application is local-first. Sessions, messages and transcripts are saved in a local database first. Each time you sign in, and whenever your connection comes back, queued changes are backed up to Supabase so you can restore them on other devices."
     }
   ];
 
@@ -89,7 +89,7 @@ export default function LandingPage({ onLaunchApp, showAuth, onCloseAuth }: Land
           </div>
 
           <p className="text-xs md:text-sm text-slate-300 font-medium max-w-xl mt-6 leading-relaxed">
-            Record or import audio, search vector embeddings, and generate summaries completely offline. Symmetrically encrypted local database.
+            Record or import audio, search vector embeddings, and generate summaries with AI that runs on your own computer.
           </p>
 
           <div className="flex items-center gap-4 mt-8">
@@ -111,9 +111,9 @@ export default function LandingPage({ onLaunchApp, showAuth, onCloseAuth }: Land
             <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-600">
               <Cpu className="w-5 h-5" />
             </div>
-            <h3 className="text-sm font-bold text-slate-900">100% Offline-First AI</h3>
+            <h3 className="text-sm font-bold text-slate-900">Local-First AI</h3>
             <p className="text-xs text-slate-500 leading-relaxed font-medium">
-              Transcribe audio files and query vector databases locally using Whisper and Llama/Mistral models without server latency or network access.
+              Transcribe audio files and query vector databases locally using Whisper and Ollama models. Your audio is never sent to an AI service.
             </p>
           </div>
 
@@ -122,9 +122,9 @@ export default function LandingPage({ onLaunchApp, showAuth, onCloseAuth }: Land
             <div className="w-10 h-10 rounded-xl bg-violet-500/10 flex items-center justify-center text-[#6c3beb]">
               <Shield className="w-5 h-5" />
             </div>
-            <h3 className="text-sm font-bold text-slate-900">Zero-Trust AES Encryption</h3>
+            <h3 className="text-sm font-bold text-slate-900">Encrypted Cloud Backups</h3>
             <p className="text-xs text-slate-500 leading-relaxed font-medium">
-              Every transcript segment is symmetrically encrypted before saving. Only you can read your data; it remains encrypted both locally and in cloud backups.
+              Transcripts, messages and session titles are encrypted before they are backed up, and database access rules keep each account&apos;s data separate.
             </p>
           </div>
 

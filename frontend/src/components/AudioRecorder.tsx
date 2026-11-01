@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
-import { Mic, Square, Play, Pause, Upload, Link2, Loader2, ArrowRight, AudioLines } from 'lucide-react';
-import { supabase } from '../utils/supabase';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Mic, Upload, Link2, Loader2, ArrowRight, AudioLines } from 'lucide-react';
 import { encryptText } from '../utils/crypto';
+import { apiFetch, readErrorDetail, MAX_UPLOAD_MB } from '../utils/api';
 
 interface AudioRecorderProps {
   onIngestSuccess: (sessionId: string, transcript: string) => void;
@@ -31,6 +31,25 @@ export default function AudioRecorder({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  /** Stop the microphone and timer without keeping the recording. */
+  const releaseMic = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      if (recorder.state !== 'inactive') recorder.stop();
+      recorder.stream.getTracks().forEach((t) => t.stop());
+      mediaRecorderRef.current = null;
+    }
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  // Turn the microphone off if the component goes away mid-recording.
+  useEffect(() => releaseMic, [releaseMic]);
 
   const startRecording = async () => {
     try {
@@ -81,6 +100,11 @@ export default function AudioRecorder({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+        alert(`This file is larger than the ${MAX_UPLOAD_MB} MB limit.`);
+        e.target.value = '';
+        return;
+      }
       setUploadFile(file);
       setAudioBlob(file);
       setRecordState('ready');
@@ -88,14 +112,31 @@ export default function AudioRecorder({
   };
 
   const resetRecorder = () => {
+    releaseMic();
     setAudioBlob(null);
     setUploadFile(null);
     setLinkUrl('');
     setRecordState('idle');
     setRecordingTime(0);
-    if (timerRef.current) clearInterval(timerRef.current);
     if (variant === 'compact') setActiveTab(null);
   };
+
+  /** Create the session record after a successful ingestion into a brand-new session. */
+  const createSessionIfNew = async (sessionId: string) => {
+    if (currentSessionId) return;
+    const now = new Date();
+    const rawTitle = `Session ${now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    const res = await apiFetch('/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ id: sessionId, session_title: encryptText(rawTitle) }),
+    });
+    if (!res.ok) throw new Error(`Could not create the session: ${await readErrorDetail(res)}`);
+  };
+
+  const errorMessage = (e: unknown) =>
+    e instanceof TypeError
+      ? 'Could not reach the local server. Make sure the backend is running.'
+      : (e instanceof Error ? e.message : String(e));
 
   const submitIngestion = async () => {
     if (!audioBlob) return;
@@ -105,41 +146,14 @@ export default function AudioRecorder({
     formData.append('file', audioBlob, uploadFile ? uploadFile.name : `rec_${Date.now()}.webm`);
     formData.append('session_id', sessionId);
     try {
-      const { data: { session: sAuth } } = await supabase.auth.getSession();
-      const token = sAuth?.access_token;
-      const user = sAuth?.user;
-
-      const res = await fetch('http://localhost:8000/upload', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: formData
-      });
-      if (!res.ok) throw new Error(`Status ${res.status}`);
+      const res = await apiFetch('/upload', { method: 'POST', body: formData });
+      if (!res.ok) throw new Error(await readErrorDetail(res));
       const result = await res.json();
-
-      if (!currentSessionId) {
-        // Pre-create the session via mediator API so keys exist locally and in cloud
-        const rawTitle = `Session ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-        const sRes = await fetch('http://localhost:8000/sessions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            id: sessionId,
-            session_title: encryptText(rawTitle)
-          })
-        });
-        if (!sRes.ok) throw new Error(`Could not initialize session: status ${sRes.status}`);
-      }
-
+      await createSessionIfNew(sessionId);
       onIngestSuccess(sessionId, result.transcript);
       resetRecorder();
-    } catch (e: any) {
-      alert(`RAG ingestion failed: ${e.message || 'Make sure your local Python server is running.'}`);
+    } catch (e) {
+      alert(`Ingestion failed: ${errorMessage(e)}`);
       setRecordState('ready');
     }
   };
@@ -149,45 +163,17 @@ export default function AudioRecorder({
     setRecordState('processing');
     const sessionId = currentSessionId || crypto.randomUUID();
     try {
-      const { data: { session: sAuth } } = await supabase.auth.getSession();
-      const token = sAuth?.access_token;
-      const user = sAuth?.user;
-
-      const res = await fetch('http://localhost:8000/upload-link', {
+      const res = await apiFetch('/upload-link', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ url: linkUrl, session_id: sessionId }),
+        body: JSON.stringify({ url: linkUrl.trim(), session_id: sessionId }),
       });
-      if (!res.ok) {
-        const d = await res.json();
-        throw new Error(d.detail || `Status ${res.status}`);
-      }
+      if (!res.ok) throw new Error(await readErrorDetail(res));
       const result = await res.json();
-
-      if (!currentSessionId) {
-        // Pre-create the session via mediator API so keys exist locally and in cloud
-        const rawTitle = `Session ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-        const sRes = await fetch('http://localhost:8000/sessions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            id: sessionId,
-            session_title: encryptText(rawTitle)
-          })
-        });
-        if (!sRes.ok) throw new Error(`Could not initialize session: status ${sRes.status}`);
-      }
-
+      await createSessionIfNew(sessionId);
       onIngestSuccess(sessionId, result.transcript);
       resetRecorder();
     } catch (e) {
-      alert(`URL ingestion failed: ${e instanceof Error ? e.message : String(e)}`);
+      alert(`Link ingestion failed: ${errorMessage(e)}`);
       setRecordState('idle');
     }
   };
@@ -203,8 +189,10 @@ export default function AudioRecorder({
       setActiveTab(null);
       return;
     }
+    releaseMic();
     setActiveTab(tab);
     setRecordState('idle');
+    setRecordingTime(0);
     setAudioBlob(null);
     setUploadFile(null);
     setLinkUrl('');
@@ -465,7 +453,7 @@ export default function AudioRecorder({
               {/* Supported Text */}
               <p className="text-[10px] tracking-[0.15em] font-bold text-center w-full mt-2 uppercase"
                 style={{ color: 'var(--text-muted)' }}>
-                SUPPORTED: MP3 • WAV • M4A • YOUTUBE • SPOTIFY • DIRECT LINKS
+                SUPPORTED: YOUTUBE • DIRECT AUDIO LINKS (MP3 • WAV • M4A • OGG • FLAC)
               </p>
             </div>
           )}
@@ -529,7 +517,7 @@ export default function AudioRecorder({
                   <div>
                     <p className="font-bold text-sm" style={{ color: 'var(--text-primary)' }}>Drag and drop audio files</p>
                     <p className="text-[11px] max-w-xs mx-auto mt-1 leading-normal" style={{ color: 'var(--text-muted)' }}>
-                      Your files will be encrypted at rest and processed using our proprietary acoustic model.
+                      Files are transcribed on this computer with Whisper. The audio file itself is deleted after processing.
                     </p>
                   </div>
 
@@ -548,7 +536,7 @@ export default function AudioRecorder({
                         </span>
                       ))}
                     </div>
-                    <span className="text-[9px] font-semibold mt-1" style={{ color: 'var(--text-muted)' }}>MAX 50MB PER FILE</span>
+                    <span className="text-[9px] font-semibold mt-1" style={{ color: 'var(--text-muted)' }}>MAX {MAX_UPLOAD_MB}MB PER FILE</span>
                   </div>
 
                   <input type="file" accept="audio/*" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" />

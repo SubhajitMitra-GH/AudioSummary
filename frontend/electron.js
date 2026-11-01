@@ -77,7 +77,8 @@ function startServices() {
 
   // 2. Spawn local Redis Server
   try {
-    const redisArgs = ['--port', '6379'];
+    // Only accept connections from this computer.
+    const redisArgs = ['--port', '6379', '--bind', '127.0.0.1'];
     
     // In production, save data to the user's Application Support directory
     if (!isDev) {
@@ -111,7 +112,8 @@ function startServices() {
       const env = { 
         ...process.env, 
         PORT: "8000",
-        REDIS_HOST: "localhost",
+        HOST: "127.0.0.1",
+        REDIS_HOST: "127.0.0.1",
         REDIS_PORT: "6379",
         PATH: `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${process.env.PATH || ''}`
       };
