@@ -1,50 +1,57 @@
 -- Row Level Security for Tell Me.
 --
--- REVIEW BEFORE RUNNING. The real table definitions are not in this repo; this script assumes
--- the columns the app uses: sessions(id, user_id, ...), chat_messages(id, session_id, ...),
--- document_chunks(session_id, user_id, ...). Run it in the Supabase SQL editor.
+-- Safe to run more than once. Run it in the Supabase SQL editor (nothing highlighted, so the
+-- whole script runs). Applied to the production project on 2026-11-02.
 --
--- Goal: each signed-in user can only see and change their own rows, and anonymous clients
--- (the public anon key) can see nothing. The backend now always calls Supabase with the
--- user's own token, so nothing in the app needs anonymous read access any more.
---
--- 1. First, list existing policies and drop any that grant access to `anon` or `public`:
---      select tablename, policyname, roles, cmd, qual
---      from pg_policies
---      where schemaname = 'public' and tablename in ('sessions', 'chat_messages', 'document_chunks');
---      -- drop policy "<name>" on public.<table>;
+-- Rule: each signed-in user can only read and change their own rows. Anonymous clients (the
+-- public anon key that ships inside the app) can see and change nothing. The backend always calls
+-- Supabase with the user's own token, so nothing in the app needs anonymous access.
 
--- 2. Enable RLS (safe to re-run)
+begin;
+
 alter table public.sessions        enable row level security;
 alter table public.chat_messages   enable row level security;
 alter table public.document_chunks enable row level security;
 
--- 3. Owner-only policies. ::text casts make this work whether user_id is uuid or text.
-drop policy if exists "sessions: owner full access" on public.sessions;
-create policy "sessions: owner full access" on public.sessions
-  for all to authenticated
-  using      ((select auth.uid())::text = user_id::text)
-  with check ((select auth.uid())::text = user_id::text);
+-- 1. Remove the old permissive rules. They let ANYONE read every user's sessions and messages
+--    and insert rows for any user. Permissive policies are OR'ed, so while these existed the
+--    owner-only rules below had no effect.
+drop policy if exists "Allow public read sessions"        on public.sessions;
+drop policy if exists "Allow public insert sessions"      on public.sessions;
+drop policy if exists "Allow public read chat_messages"   on public.chat_messages;
+drop policy if exists "Allow public insert chat_messages" on public.chat_messages;
 
-drop policy if exists "chat_messages: session owner full access" on public.chat_messages;
-create policy "chat_messages: session owner full access" on public.chat_messages
-  for all to authenticated
+-- 2. Owner-only rules (recreated so the script is the single source of truth).
+--    For anonymous requests auth.uid() is NULL, so these never match.
+drop policy if exists "Users can manage their own sessions" on public.sessions;
+create policy "Users can manage their own sessions" on public.sessions
+  for all
+  using      (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop policy if exists "Users can manage messages in their own sessions" on public.chat_messages;
+create policy "Users can manage messages in their own sessions" on public.chat_messages
+  for all
   using (exists (
-    select 1 from public.sessions s
-    where s.id = chat_messages.session_id and s.user_id::text = (select auth.uid())::text
+    select 1 from public.sessions
+    where sessions.id = chat_messages.session_id and sessions.user_id = auth.uid()
   ))
   with check (exists (
-    select 1 from public.sessions s
-    where s.id = chat_messages.session_id and s.user_id::text = (select auth.uid())::text
+    select 1 from public.sessions
+    where sessions.id = chat_messages.session_id and sessions.user_id = auth.uid()
   ));
 
--- Chunks are uploaded right after transcription, before the session row exists in the cloud,
--- so this policy checks only the chunk's own user_id.
-drop policy if exists "document_chunks: owner full access" on public.document_chunks;
-create policy "document_chunks: owner full access" on public.document_chunks
-  for all to authenticated
-  using      ((select auth.uid())::text = user_id::text)
-  with check ((select auth.uid())::text = user_id::text);
+-- Chunks are uploaded right after transcription, before the session row reaches the cloud,
+-- so this rule checks only the chunk's own user_id.
+drop policy if exists "Users can manage chunks" on public.document_chunks;
+create policy "Users can manage chunks" on public.document_chunks
+  for all
+  using      (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
--- 4. Verify: as an anonymous client this must return zero rows.
---      curl "$SUPABASE_URL/rest/v1/sessions?select=id" -H "apikey: $SUPABASE_ANON_KEY"
+commit;
+
+-- Verify: this must list exactly the 3 "Users can manage ..." policies and nothing else.
+--   select tablename, policyname, roles, cmd
+--   from pg_policies
+--   where schemaname = 'public' and tablename in ('sessions', 'chat_messages', 'document_chunks');
