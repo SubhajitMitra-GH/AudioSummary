@@ -40,7 +40,9 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="min-h-full flex flex-col font-[family-name:var(--font-inter)]">{children}</body>
+      {/* Browser extensions (e.g. ColorZilla) add attributes to <body> before React loads;
+          ignore those instead of reporting a hydration mismatch. */}
+      <body suppressHydrationWarning className="min-h-full flex flex-col font-[family-name:var(--font-inter)]">{children}</body>
     </html>
   );
 }

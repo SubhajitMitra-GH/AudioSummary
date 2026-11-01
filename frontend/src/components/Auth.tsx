@@ -1,8 +1,20 @@
 'use client';
 
 import React, { useState } from 'react';
-import { supabase } from '../utils/supabase';
+import { supabase, isSupabaseConfigured } from '../utils/supabase';
 import { Mail, Lock, Loader2, ArrowRight, AudioLines, User } from 'lucide-react';
+
+const NOT_CONFIGURED_MESSAGE =
+  'Sign-in is not set up: add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to frontend/.env.local, then restart the app.';
+
+/** Turn Supabase/network errors into something a user can act on. */
+function authErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : '';
+  if (err instanceof TypeError || /failed to fetch|network/i.test(message)) {
+    return "Can't reach the sign-in service. Check your internet connection and try again.";
+  }
+  return message || 'An error occurred during authentication.';
+}
 
 export default function Auth() {
   const [email, setEmail] = useState('');
@@ -18,6 +30,10 @@ export default function Auth() {
     if (!email.trim() || !password.trim()) return;
     if (isSignUp && !username.trim()) {
       setErrorMsg('Username is required.');
+      return;
+    }
+    if (!isSupabaseConfigured) {
+      setErrorMsg(NOT_CONFIGURED_MESSAGE);
       return;
     }
 
@@ -47,7 +63,7 @@ export default function Auth() {
         if (error) throw error;
       }
     } catch (err) {
-      setErrorMsg(err instanceof Error && err.message ? err.message : 'An error occurred during authentication.');
+      setErrorMsg(authErrorMessage(err));
     } finally {
       setLoading(false);
     }
