@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "electron": "electron .",
-    "build:desktop": "next build && electron-builder --mac"
+    "build:desktop": "next build && electron-builder --mac",
+    "test": "vitest run"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
@@ -30,7 +31,8 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   },
   "build": {
     "appId": "com.tellme.app",
