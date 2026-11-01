@@ -5,6 +5,7 @@ import { Session } from '../utils/supabase';
 import { decryptText } from '../utils/crypto';
 import { Plus, MessageSquare, Loader2, Cpu, Database, AudioLines, X, Edit3, Check, LogOut, Sun, Moon } from 'lucide-react';
 import { supabase } from '../utils/supabase';
+import type { ModelOption } from '../utils/api';
 
 interface SidebarProps {
   sessions: Session[];
@@ -16,6 +17,8 @@ interface SidebarProps {
   onRenameSession: (id: string, newTitle: string) => void;
   isDarkMode: boolean;
   onToggleTheme: () => void;
+  models: ModelOption[];
+  onSelectModel: (modelId: string) => void;
 }
 
 export default function Sidebar({
@@ -27,8 +30,11 @@ export default function Sidebar({
   onDeleteSession,
   onRenameSession,
   isDarkMode,
-  onToggleTheme
+  onToggleTheme,
+  models,
+  onSelectModel
 }: SidebarProps) {
+  const activeModel = models.find((m) => m.active);
   const [editingSessionId, setEditingSessionId] = React.useState<string | null>(null);
   const [editingText, setEditingText] = React.useState<string>('');
   const [userEmail, setUserEmail] = React.useState<string>('');
@@ -221,11 +227,26 @@ export default function Sidebar({
       {/* Sidebar Footer */}
       <div className="mt-auto flex flex-col" style={{ borderTop: '1px solid var(--border)' }}>
         <div className="px-4 py-3 flex flex-col gap-1.5" style={{ borderBottom: '1px solid var(--border)' }}>
-          <div className="flex items-center gap-2.5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider"
-            style={{ color: 'var(--text-muted)' }}>
+          <label className="flex items-center gap-2.5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--text-muted)' }}
+            title="AI model used to write answers. Models that aren't downloaded yet will offer a download.">
             <Cpu className="w-3.5 h-3.5 shrink-0" />
-            <span>Local Embeddings</span>
-          </div>
+            <span className="shrink-0">AI Model</span>
+            <select
+              value={activeModel?.id ?? ''}
+              onChange={(e) => onSelectModel(e.target.value)}
+              disabled={models.length === 0}
+              className="ml-auto min-w-0 max-w-[140px] truncate rounded-lg px-2 py-1 text-[11px] font-semibold normal-case tracking-normal cursor-pointer focus:outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+            >
+              {models.length === 0 && <option value="">Loading…</option>}
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}{m.installed ? '' : ` (${m.size_gb ? `${m.size_gb} GB ` : ''}download)`}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="flex items-center gap-2.5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider"
             style={{ color: 'var(--text-muted)' }}>
             <Database className="w-3.5 h-3.5 shrink-0" />

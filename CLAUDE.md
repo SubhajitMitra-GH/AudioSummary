@@ -15,7 +15,8 @@ FastAPI (backend/app/main.py) — the ONLY path for app data
  │                     falls back to Supabase /auth/v1/user online for HS256 projects; never trusts unsigned tokens
  ├─ auth.py          → verify_session_ownership: Redis owner first, then Supabase with the USER's token (RLS)
  ├─ audio_processor  → faster-whisper "base", CPU, int8
- ├─ rag_pipeline     → chunk (1000/150) → all-MiniLM-L6-v2 (384-d) → Redis HNSW → Ollama
+ ├─ rag_pipeline     → chunk (1000/150) → all-MiniLM-L6-v2 (384-d) → Redis HNSW → Ollama (active model)
+ ├─ llm_models       → model catalog (Fast/Balanced/Best) + per-machine active model in Redis
  ├─ redis_client     → local cache + vector index + offline "synced=False" queue (SCAN, auto-reconnect)
  ├─ url_processor    → yt-dlp or direct download; public addresses only, size-capped
  └─ supabase_rest    → PostgREST URL/header helpers (always the user's token)
@@ -30,7 +31,7 @@ FastAPI (backend/app/main.py) — the ONLY path for app data
 
 - **Frontend:** Next.js 16.2.9 (`output: "export"`), React 19.2.4, TypeScript (strict), Tailwind CSS v4, lucide-react, crypto-js, @supabase/supabase-js. Electron ^43 + electron-builder (mac zip).
 - **Backend:** Python ≥3.10, FastAPI, uvicorn, pydantic-settings, PyJWT[crypto], requests, python-dateutil, faster-whisper, sentence-transformers, langchain-text-splitters, langchain-community (`Ollama` LLM), redis-py, cryptography (Fernet), yt-dlp.
-- **Services:** Redis with the search module (Redis Stack or Redis 8+), Ollama on :11434 (default model `mistral`), Supabase (Auth + Postgres), ffmpeg (yt-dlp audio extraction).
+- **Services:** Redis with the search module (Redis Stack or Redis 8+), Ollama on :11434 (default model `llama3.2:3b`; users can switch), Supabase (Auth + Postgres), ffmpeg (yt-dlp audio extraction).
 
 ## Important directories
 
@@ -42,6 +43,7 @@ backend/app/config.py          Settings (reads backend/.env relative to CWD)
 backend/app/rag_pipeline.py    Fernet helpers, ingest, retrieval, prompt, Ollama call
 backend/app/redis_client.py    Redis key layout, vector index, unsynced fetchers
 backend/app/url_processor.py   link downloads + IngestError (user-facing messages)
+backend/app/llm_models.py      AI model catalog, active-model get/set, install detection
 backend/tests/                 pytest suite (heavy ML libs are stubbed in conftest.py)
 frontend/electron.js           main process, app:// protocol, sidecar spawning
 frontend/src/app/page.tsx      top-level controller: state + startup gates + chat/session actions
@@ -80,7 +82,7 @@ Desktop packaging needs `backend/dist/backend-service/` built with PyInstaller (
 
 ## Configuration
 
-`backend/.env` (see `backend/.env.example`): `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `BACKEND_ENCRYPTION_KEY`, `REDIS_HOST/PORT/DB/PASSWORD`, `HOST` (keep `127.0.0.1`), `PORT`, `LLM_MODEL`, `MAX_UPLOAD_MB` (default 200), `CORS_ORIGIN_REGEX` (default: `app://` + localhost).
+`backend/.env` (see `backend/.env.example`): `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `BACKEND_ENCRYPTION_KEY`, `REDIS_HOST/PORT/DB/PASSWORD`, `HOST` (keep `127.0.0.1`), `PORT`, `LLM_MODEL` (default model until the user picks one in the sidebar), `MAX_UPLOAD_MB` (default 200), `CORS_ORIGIN_REGEX` (default: `app://` + localhost).
 Frontend (see `frontend/.env.example`): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_ALE_KEY`, `NEXT_PUBLIC_API_BASE_URL`. `MAX_UPLOAD_MB` in `api.ts` must match the backend.
 
 ## API (backend/app/main.py)
@@ -90,8 +92,10 @@ All session-scoped routes validate the session id as a UUID and call `verify_ses
 | Route | Auth | Notes |
 |---|---|---|
 | `GET /health` | – | `healthy` only if Redis pings |
-| `GET /ollama/status`, `GET /ollama/install/status` | – | read-only |
-| `POST /ollama/install`, `POST /ollama/pull` | JWT | install is macOS-only (ditto + codesign verify); pull streams NDJSON |
+| `GET /ollama/status`, `GET /ollama/install/status` | – | read-only; status reports the ACTIVE model |
+| `GET /models` | – | catalog with `installed`/`active` flags |
+| `PUT /models/active` (`model`) | JWT | switch model; must be in the catalog (or LLM_MODEL) |
+| `POST /ollama/install`, `POST /ollama/pull` | JWT | install is macOS-only (ditto + codesign verify); pull downloads the active model, streams NDJSON |
 | `POST /sync` | JWT | flush offline queue |
 | `GET /sessions`, `POST /sessions` | JWT | POST on an existing id returns it unchanged (never resets `created_at`) |
 | `PATCH /sessions/{id}` | JWT + owner | rename (`session_title`) |
@@ -111,7 +115,7 @@ Redis keys (`redis_client.py`):
 - `session:{id}` hash · `user_sessions:{uid}` set
 - `message:{id}` hash · `session_messages:{sid}` zset (score = server time)
 - `chunk:{sid}:{idx}` hash, `embedding` as raw float32 bytes; new sources continue numbering after existing chunks · index `vector_idx` on prefix `chunk:` (Tag `session_id`/`user_id`, Text `content`, HNSW FLOAT32 384 COSINE)
-- `deleted_session:{sid}` = uid (delete tombstone) · `supabase:jwks` (cached signing keys)
+- `deleted_session:{sid}` = uid (delete tombstone) · `supabase:jwks` (cached signing keys) · `settings:llm_model` (active AI model)
 - All hashes use string `"True"`/`"False"` for `synced`.
 
 Encryption (two schemes, both with keys shared by every user of an install — not end-to-end):

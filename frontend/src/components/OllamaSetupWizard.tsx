@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Cpu, Download, Loader2, RefreshCw, AlertTriangle, ArrowRight } from 'lucide-react';
-import { API_BASE, apiFetch, readErrorDetail } from '../utils/api';
+import { Cpu, Download, Loader2, RefreshCw, AlertTriangle, ArrowRight, Check } from 'lucide-react';
+import { API_BASE, apiFetch, readErrorDetail, ModelOption } from '../utils/api';
 
 type InstallState = 'idle' | 'downloading' | 'extracting' | 'starting' | 'error';
 
@@ -25,10 +25,12 @@ interface OllamaStatus {
 
 interface OllamaSetupWizardProps {
   status: OllamaStatus;
+  models: ModelOption[];
+  onSelectModel: (modelId: string) => Promise<void>;
   onComplete: () => void;
 }
 
-export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWizardProps) {
+export default function OllamaSetupWizard({ status, models, onSelectModel, onComplete }: OllamaSetupWizardProps) {
   const [installState, setInstallState] = useState<InstallState>('idle');
   const [installProgress, setInstallProgress] = useState(0);
   const [installError, setInstallError] = useState<string | null>(null);
@@ -160,6 +162,18 @@ export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWiz
     }
   };
 
+  /** Make a model the active one; if it isn't downloaded yet, download it. */
+  const chooseModel = async (model: ModelOption) => {
+    setPullError(null);
+    try {
+      await onSelectModel(model.id);
+    } catch (err) {
+      setPullError(errorText(err, 'Could not select this model.'));
+      return;
+    }
+    if (!model.installed) await handlePullModel();
+  };
+
   const renderInstaller = () => {
     const isInstalling = ['downloading', 'extracting', 'starting'].includes(installState);
 
@@ -245,26 +259,30 @@ export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWiz
   };
 
   const renderModelPuller = () => {
+    const downloading = models.find((m) => m.id === status.configured_model);
     return (
-      <div className="flex flex-col gap-6 select-none">
+      <div className="flex flex-col gap-5 select-none">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 shadow-lg shadow-indigo-900/10 shrink-0 animate-pulse">
-            <Cpu className="w-6 h-6 animate-spin" style={{ animationDuration: '3s' }} />
+          <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 shadow-lg shadow-indigo-900/10 shrink-0">
+            <Cpu className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-white tracking-tight">AI Model Setup Required</h2>
-            <p className="text-xs text-slate-400 font-semibold tracking-wide mt-0.5">Model &ldquo;{status.configured_model}&rdquo; missing</p>
+            <h2 className="text-lg font-bold text-white tracking-tight">Choose an AI Model</h2>
+            <p className="text-xs text-slate-400 font-semibold tracking-wide mt-0.5">Runs privately on this computer</p>
           </div>
         </div>
 
         <p className="text-xs text-slate-300 leading-relaxed font-medium">
-          Ollama is running successfully, but the local model <strong>{status.configured_model}</strong> is not yet downloaded. We need this file to generate answers locally on your Mac.
+          The model writes answers and summaries from your transcripts. Smaller models are faster and use
+          less memory; you can switch any time from the sidebar.
         </p>
 
         {pulling ? (
           <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6 flex flex-col gap-4">
             <div className="flex items-center justify-between text-xs font-bold text-white">
-              <span className="capitalize">{pullStatus || 'Downloading model files...'}</span>
+              <span className="capitalize">
+                {downloading ? `${downloading.label}: ` : ''}{pullStatus || 'Downloading model files...'}
+              </span>
               <span className="font-mono text-indigo-400">{pullProgress}%</span>
             </div>
             <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -275,19 +293,46 @@ export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWiz
             </div>
             <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400">
               <span>{pullDetails || 'Allocating disk space...'}</span>
-              <span>Keep app active during pull</span>
+              <span>Keep app active during download</span>
             </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-3">
-            <button
-              onClick={handlePullModel}
-              disabled={verifying}
-              className="w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-full font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 cursor-pointer active:scale-98 transition-all"
-            >
-              Download Local &ldquo;{status.configured_model}&rdquo; Model <ArrowRight className="w-4 h-4" />
-            </button>
-            <span className="text-[10px] text-center font-bold uppercase tracking-wider text-slate-500">Download size is several GB</span>
+          <div className="flex flex-col gap-2.5">
+            {models.map((model) => (
+              <div key={model.id}
+                className={`rounded-2xl border p-4 flex items-center gap-3 ${model.recommended ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800 bg-slate-900/30'}`}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-bold text-white">{model.label}</span>
+                    {model.recommended && (
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-300 bg-indigo-500/15 px-2 py-0.5 rounded-full">Recommended</span>
+                    )}
+                    <span className="text-[10px] font-mono text-slate-500">{model.id}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed mt-1">{model.description}</p>
+                </div>
+                <button
+                  onClick={() => chooseModel(model)}
+                  disabled={verifying}
+                  className="shrink-0 px-4 py-2 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-all disabled:opacity-50 bg-[#562cd6] hover:bg-[#431fb5] text-white"
+                >
+                  {model.installed ? (
+                    <><Check className="w-3.5 h-3.5" /> Use</>
+                  ) : (
+                    <><Download className="w-3.5 h-3.5" /> {model.size_gb ? `${model.size_gb} GB` : 'Download'}</>
+                  )}
+                </button>
+              </div>
+            ))}
+            {models.length === 0 && (
+              <button
+                onClick={handlePullModel}
+                disabled={verifying}
+                className="w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-full font-bold text-xs flex items-center justify-center gap-2 cursor-pointer"
+              >
+                Download &ldquo;{status.configured_model}&rdquo; <ArrowRight className="w-4 h-4" />
+              </button>
+            )}
           </div>
         )}
 

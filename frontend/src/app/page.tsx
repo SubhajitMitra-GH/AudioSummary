@@ -8,7 +8,7 @@ import LandingPage from '../components/LandingPage';
 import OllamaSetupWizard from '../components/OllamaSetupWizard';
 import { supabase, Session, ChatMessage } from '../utils/supabase';
 import { encryptText, decryptText } from '../utils/crypto';
-import { API_BASE, apiFetch, readErrorDetail } from '../utils/api';
+import { API_BASE, apiFetch, readErrorDetail, ModelOption, ModelsResponse } from '../utils/api';
 import { PanelLeftClose, PanelLeftOpen, AudioLines } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 
@@ -114,6 +114,9 @@ export default function Home() {
   // State to check Ollama and local model installation status
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
 
+  // Local AI models the user can choose from
+  const [models, setModels] = useState<ModelOption[]>([]);
+
   // Keep a mutable reference to the active session ID to avoid trigger re-runs inside event listeners
   const currentSessionIdRef = useRef<string | null>(currentSessionId);
   useEffect(() => {
@@ -172,11 +175,50 @@ export default function Home() {
     }
   }, []);
 
+  const fetchModels = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/models`);
+      if (res.ok) {
+        const data: ModelsResponse = await res.json();
+        setModels(data.models);
+      }
+    } catch (err) {
+      console.error('Failed to load AI models:', err);
+    }
+  }, []);
+
   useEffect(() => {
     if (isBackendReady) {
       checkOllamaStatus();
+      fetchModels();
     }
-  }, [isBackendReady, checkOllamaStatus]);
+  }, [isBackendReady, checkOllamaStatus, fetchModels]);
+
+  /** Switch the AI model used for answers. Throws if the backend refuses. */
+  const selectModel = useCallback(async (modelId: string) => {
+    const res = await apiFetch('/models/active', {
+      method: 'PUT',
+      body: JSON.stringify({ model: modelId }),
+    });
+    if (!res.ok) throw new Error(await readErrorDetail(res));
+    const data: ModelsResponse = await res.json();
+    setModels(data.models);
+    // If the new model isn't downloaded yet, this shows the setup screen with a download button.
+    await checkOllamaStatus();
+  }, [checkOllamaStatus]);
+
+  const refreshModelsAndStatus = useCallback(async () => {
+    await Promise.all([checkOllamaStatus(), fetchModels()]);
+  }, [checkOllamaStatus, fetchModels]);
+
+  const handleSidebarModelChange = async (modelId: string) => {
+    try {
+      await selectModel(modelId);
+    } catch (e) {
+      console.error('Failed to switch model:', e);
+      alert(`Could not switch model: ${e instanceof Error ? e.message : 'unknown error'}`);
+    }
+  };
 
   // 1. Get/Listen to auth state (ONLY after backend is ready)
   useEffect(() => {
@@ -489,7 +531,9 @@ export default function Home() {
     return (
       <OllamaSetupWizard
         status={ollamaStatus}
-        onComplete={checkOllamaStatus}
+        models={models}
+        onSelectModel={selectModel}
+        onComplete={refreshModelsAndStatus}
       />
     );
   }
@@ -512,6 +556,8 @@ export default function Home() {
           onRenameSession={handleRenameSession}
           isDarkMode={isDarkMode}
           onToggleTheme={toggleTheme}
+          models={models}
+          onSelectModel={handleSidebarModelChange}
         />
       </div>
 

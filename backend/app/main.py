@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.auth import get_current_user, validate_session_id, verify_session_ownership
 from app.audio_processor import audio_processor
+from app.llm_models import available_models, describe, get_active_model, is_installed, is_known_model, set_active_model
 from app.rag_pipeline import rag_pipeline
 from app.redis_client import redis_client
 from app.supabase_rest import rest_url, user_headers
@@ -260,27 +261,55 @@ def download_and_install_ollama_bg():
         _set_install(f"error: {e}", 0)
 
 
-@app.get("/ollama/status")
-def get_ollama_status():
-    ollama_running = False
-    model_pulled = False
-
+def ollama_installed_models() -> list[str] | None:
+    """Names of models downloaded in Ollama, or None if Ollama isn't running."""
     try:
         res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
         if res.status_code == 200:
-            ollama_running = True
-            models = [m.get("name", "") for m in res.json().get("models", [])]
-            # Match "mistral" against "mistral" or "mistral:<tag>", but not "mistral-nemo"
-            target = settings.llm_model
-            model_pulled = any(m == target or m.startswith(f"{target}:") for m in models)
+            return [m.get("name", "") for m in res.json().get("models", [])]
     except (requests.RequestException, ValueError):
         pass
+    return None
 
+
+@app.get("/ollama/status")
+def get_ollama_status():
+    installed = ollama_installed_models()
+    active = get_active_model()
     return {
-        "ollama_running": ollama_running,
-        "model_pulled": model_pulled,
-        "configured_model": settings.llm_model
+        "ollama_running": installed is not None,
+        "model_pulled": installed is not None and is_installed(active, installed),
+        "configured_model": active
     }
+
+
+class SelectModelRequest(BaseModel):
+    model: str
+
+
+def _models_response() -> dict:
+    installed = ollama_installed_models()
+    active = get_active_model()
+    return {
+        "active": active,
+        "ollama_running": installed is not None,
+        "models": [describe(m, active, installed) for m in available_models()],
+    }
+
+
+@app.get("/models")
+def list_models():
+    """The AI models users can choose from, which are downloaded, and which is in use."""
+    return _models_response()
+
+
+@app.put("/models/active")
+def select_model(request: SelectModelRequest, credentials: dict = Depends(get_current_user)):
+    if not is_known_model(request.model):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown model.")
+    set_active_model(request.model)
+    logger.info(f"Active AI model set to '{request.model}'.")
+    return _models_response()
 
 
 @app.post("/ollama/install")
@@ -305,7 +334,7 @@ def get_ollama_install_status():
 def pull_ollama_model(credentials: dict = Depends(get_current_user)):
     def generate():
         try:
-            with requests.post(f"{OLLAMA_URL}/api/pull", json={"name": settings.llm_model},
+            with requests.post(f"{OLLAMA_URL}/api/pull", json={"name": get_active_model()},
                                stream=True, timeout=(5, 3600)) as res:
                 if res.status_code != 200:
                     yield json.dumps({"status": "error", "message": f"Ollama returned HTTP {res.status_code}"}) + "\n"

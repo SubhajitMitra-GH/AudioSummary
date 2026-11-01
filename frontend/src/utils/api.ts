@@ -22,6 +22,23 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   return fetch(`${API_BASE}${path}`, { ...init, headers });
 }
 
+/** A local AI model the user can choose (GET /models). */
+export interface ModelOption {
+  id: string;
+  label: string;
+  description: string;
+  size_gb: number;
+  recommended: boolean;
+  installed: boolean;
+  active: boolean;
+}
+
+export interface ModelsResponse {
+  active: string;
+  ollama_running: boolean;
+  models: ModelOption[];
+}
+
 /** The backend's error message (FastAPI `detail`), or a generic status line. */
 export async function readErrorDetail(res: Response): Promise<string> {
   try {

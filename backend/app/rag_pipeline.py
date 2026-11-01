@@ -13,6 +13,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 
 from app.config import settings
+from app.llm_models import get_active_model
 from app.redis_client import redis_client
 from app.supabase_rest import rest_url, user_headers
 
@@ -275,8 +276,9 @@ Answer:"""
 
         # 4. Invoke local Ollama model
         from langchain_community.llms import Ollama
-        logger.info(f"Generating response with local Ollama model '{settings.llm_model}'...")
-        llm = Ollama(model=settings.llm_model)
+        model = get_active_model()
+        logger.info(f"Generating response with local Ollama model '{model}'...")
+        llm = Ollama(model=model)
         response = llm.invoke(prompt)
         logger.info("Ollama response generated successfully.")
 

@@ -8,6 +8,8 @@ import pytest
 os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
 os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 os.environ.setdefault("BACKEND_ENCRYPTION_KEY", "test-encryption-key")
+# Environment variables win over backend/.env, so a developer's local .env can't change test results.
+os.environ.setdefault("LLM_MODEL", "llama3.2:3b")
 
 
 def _stub_module(name: str, **attrs):
@@ -33,8 +35,10 @@ class _FakeSentenceTransformer:
 
 
 class _FakeOllama:
+    last_model = None
+
     def __init__(self, *args, **kwargs):
-        pass
+        _FakeOllama.last_model = kwargs.get("model")
 
     def invoke(self, prompt):
         return "stub answer"

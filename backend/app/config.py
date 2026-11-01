@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     # Browser origins allowed to call the API: the packaged Electron app (app://) and the Next dev server.
     cors_origin_regex: str = r"^(app://.*|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
-    llm_model: str = "mistral"
+    # Default local model until the user picks one in the app (see app/llm_models.py).
+    llm_model: str = "llama3.2:3b"
     supabase_url: str = ""
     supabase_anon_key: str = ""
     backend_encryption_key: str = DEFAULT_BACKEND_ENCRYPTION_KEY
