@@ -40,6 +40,27 @@ def utc_now_iso() -> str:
     return time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime())
 
 
+def push_chunks(session_id: str, chunks: list, token: str) -> bool:
+    """Upload one session's queued transcript chunks to Supabase and mark them synced. Needs the session row
+    to exist in the cloud first (document_chunks references sessions), otherwise Supabase answers 409."""
+    if not chunks:
+        return True
+    rows = [{k: c[k] for k in ("session_id", "chunk_index", "content", "embedding", "user_id")} for c in chunks]
+    try:
+        res = requests.post(rest_url("document_chunks"), json=rows,
+                            headers=user_headers(token, json_body=True, prefer="return=minimal"),
+                            timeout=15)
+    except requests.RequestException as e:
+        logger.warning(f"Supabase offline: chunks for session {session_id} stay queued ({e})")
+        return False
+    if res.status_code in (200, 201):
+        for c in chunks:
+            redis_client.mark_chunk_synced(c["redis_key"])
+        return True
+    logger.warning(f"Chunk sync for session {session_id} failed: status {res.status_code}")
+    return False
+
+
 def sync_user_data(user_id: str, token: str):
     """Flushes unsynced local Redis sessions, messages, chunks and deletions to Supabase for this user."""
     if not redis_client.client:
@@ -90,15 +111,7 @@ def sync_user_data(user_id: str, token: str):
         for chunk in unsynced_chunks:
             by_session.setdefault(chunk["session_id"], []).append(chunk)
         for session_id, chunks in by_session.items():
-            rows = [{k: c[k] for k in ("session_id", "chunk_index", "content", "embedding", "user_id")} for c in chunks]
-            res = requests.post(rest_url("document_chunks"), json=rows,
-                                headers=user_headers(token, json_body=True, prefer="return=minimal"),
-                                timeout=15)
-            if res.status_code in (200, 201):
-                for c in chunks:
-                    redis_client.mark_chunk_synced(c["redis_key"])
-            else:
-                logger.warning(f"Chunk sync for session {session_id} failed: status {res.status_code}")
+            push_chunks(session_id, chunks, token)
 
         # 4. Deletions
         for session_id in pending_deletions:
@@ -470,6 +483,11 @@ def create_session(request: CreateSessionRequest, credentials: dict = Depends(ge
                             timeout=5)
         if res.status_code in (200, 201):
             redis_client.mark_session_synced(session_id)
+            # The recording was ingested before this session existed in the cloud, so its chunks were
+            # refused then (409). Now that the session row exists, back them up right away.
+            queued = [c for c in redis_client.get_unsynced_chunks()
+                      if c.get("session_id") == session_id and c.get("user_id") == user_id]
+            push_chunks(session_id, queued, token)
     except requests.RequestException as e:
         logger.warning(f"Supabase offline. Cached session in local queue: {e}")
 

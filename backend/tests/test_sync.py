@@ -174,3 +174,25 @@ def test_message_with_unknown_sender_is_rejected(client):
         "message_text": "x", "created_at": "2026-01-01T00:00:00Z",
     })
     assert res.status_code == 422
+
+
+def test_new_session_backs_up_chunks_that_were_ingested_before_it(client, monkeypatch):
+    # Ingestion runs before POST /sessions, so Supabase refuses the chunks then (409: session row missing).
+    sid = str(uuid.uuid4())
+    redis_client.save_chunk(sid, 0, "c0", [0.1] * 384, "user-a", synced=False)
+    rec = Recorder(201)
+    monkeypatch.setattr(requests, "post", rec)
+    assert client.post("/sessions", json={"id": sid, "session_title": "t"}).status_code == 200
+    urls = rec.urls()
+    assert urls[0].endswith("/sessions") and urls[1].endswith("/document_chunks")
+    assert redis_client.client.hget(f"chunk:{sid}:0", "synced") == "True"
+
+
+def test_new_session_keeps_chunks_queued_when_the_session_is_not_saved(client, monkeypatch):
+    sid = str(uuid.uuid4())
+    redis_client.save_chunk(sid, 0, "c0", [0.1] * 384, "user-a", synced=False)
+    rec = Recorder(500)
+    monkeypatch.setattr(requests, "post", rec)
+    client.post("/sessions", json={"id": sid, "session_title": "t"})
+    assert not any(u.endswith("/document_chunks") for u in rec.urls())
+    assert redis_client.client.hget(f"chunk:{sid}:0", "synced") == "False"
