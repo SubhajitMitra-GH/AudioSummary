@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     backend_encryption_key: str = DEFAULT_BACKEND_ENCRYPTION_KEY
     # Maximum size of an uploaded or downloaded audio file.
     max_upload_mb: int = 200
+    # Shared online server (Hugging Face Space) instead of one person's Mac: the AI model is fixed
+    # (users can't switch or download models), and /health waits for Ollama as well as Redis.
+    server_mode: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",

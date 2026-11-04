@@ -38,6 +38,13 @@ yarn-error.log*
 *$py.class
 *.so
 *.spec
+!backend/backend-service.spec
+
+# Desktop build outputs (scripts/build-desktop.sh)
+/backend/build/
+/backend/dist/
+/frontend/dist/
+/frontend/resources/redis/
 .Python
 build/
 develop-eggs/
@@ -66,3 +73,15 @@ MANIFEST
 dump.rdb
 
 /context
+/frontend/.lan-site/
+# Redis binaries bundled by scripts/build-desktop.sh
+/frontend/resources/
+
+# intro video build output (rebuild with video/build.sh)
+/video/.work/
+/video/out/
+/video/vo/
+/frontend/.web-site/
+/server/.stage/
+/server/.api-url
+/server/.build.log

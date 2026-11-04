@@ -185,8 +185,10 @@ class LinkRequest(BaseModel):
 @app.get("/health", status_code=200)
 def health_check():
     redis_alive = redis_client.ping()
+    # On the shared server the AI model is part of the service: report ready only once Ollama answers too.
+    ready = redis_alive and (not settings.server_mode or ollama_installed_models() is not None)
     return {
-        "status": "healthy" if redis_alive else "degraded",
+        "status": "healthy" if ready else "degraded",
         "redis_connected": redis_alive,
         "service": "Audio Summarization RAG API"
     }
@@ -204,9 +206,49 @@ def _set_install(status_: str, progress: int):
     ollama_install_progress["progress"] = progress
 
 
-def download_and_install_ollama_bg():
-    """Download Ollama, verify its code signature, copy it to /Applications and launch it (macOS)."""
+OLLAMA_APP_PATHS = ("/Applications/Ollama.app", os.path.expanduser("~/Applications/Ollama.app"))
+OLLAMA_CLI_PATHS = ("/opt/homebrew/bin/ollama", "/usr/local/bin/ollama")
+
+
+def _ollama_answering() -> bool:
     try:
+        return requests.get(f"{OLLAMA_URL}/api/tags", timeout=2).status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def _wait_for_ollama(seconds: int) -> bool:
+    for _ in range(seconds):
+        if _ollama_answering():
+            return True
+        time.sleep(1)
+    return False
+
+
+def start_existing_ollama() -> bool:
+    """If Ollama is already installed (app or Homebrew CLI) but not running, start it instead of downloading."""
+    app_path = next((p for p in OLLAMA_APP_PATHS if os.path.isdir(p)), None)
+    if app_path:
+        logger.info("Ollama.app is installed; launching it.")
+        subprocess.Popen(["open", app_path])
+        return _wait_for_ollama(30)
+    cli = next((p for p in OLLAMA_CLI_PATHS if os.path.isfile(p) and os.access(p, os.X_OK)), None)
+    if cli:
+        logger.info("Ollama CLI is installed; starting `ollama serve`.")
+        # Own session: keeps running independently of this request (and of the app restarting).
+        subprocess.Popen([cli, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return _wait_for_ollama(30)
+    return False
+
+
+def download_and_install_ollama_bg():
+    """Start an installed Ollama, or download it, verify its code signature, copy it to /Applications and launch it (macOS)."""
+    try:
+        _set_install("starting", 5)
+        if start_existing_ollama():
+            _set_install("completed", 100)
+            logger.info("Started the Ollama that was already installed.")
+            return
         with tempfile.TemporaryDirectory(prefix="ollama-install-") as tmp:
             zip_path = os.path.join(tmp, "Ollama-darwin.zip")
             logger.info("Starting Ollama app download...")
@@ -290,11 +332,21 @@ class SelectModelRequest(BaseModel):
 def _models_response() -> dict:
     installed = ollama_installed_models()
     active = get_active_model()
+    models = [describe(m, active, installed) for m in available_models()]
+    if settings.server_mode:
+        models = [m for m in models if m["active"]]  # the server runs one fixed model
     return {
         "active": active,
         "ollama_running": installed is not None,
-        "models": [describe(m, active, installed) for m in available_models()],
+        "server_mode": settings.server_mode,
+        "models": models,
     }
+
+
+def _refuse_on_server():
+    if settings.server_mode:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="The online server uses a fixed AI model. Choose models in the Mac app.")
 
 
 @app.get("/models")
@@ -305,6 +357,7 @@ def list_models():
 
 @app.put("/models/active")
 def select_model(request: SelectModelRequest, credentials: dict = Depends(get_current_user)):
+    _refuse_on_server()
     if not is_known_model(request.model):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown model.")
     set_active_model(request.model)
@@ -314,6 +367,7 @@ def select_model(request: SelectModelRequest, credentials: dict = Depends(get_cu
 
 @app.post("/ollama/install")
 def trigger_ollama_install(credentials: dict = Depends(get_current_user)):
+    _refuse_on_server()
     if sys.platform != "darwin":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Automatic installation is only available on macOS. Install Ollama from ollama.com.")
@@ -332,6 +386,7 @@ def get_ollama_install_status():
 
 @app.post("/ollama/pull")
 def pull_ollama_model(credentials: dict = Depends(get_current_user)):
+    _refuse_on_server()
     def generate():
         try:
             with requests.post(f"{OLLAMA_URL}/api/pull", json={"name": get_active_model()},

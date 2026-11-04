@@ -218,7 +218,11 @@ def test_transcribe_requires_an_existing_file(tmp_path):
         p.transcribe(str(tmp_path / "missing.mp3"))
 
 
-def test_transcribe_joins_segments(tmp_path):
+def test_transcribe_joins_segments(tmp_path, monkeypatch):
+    import numpy as np
+    from app import audio_processor as ap_module
+    monkeypatch.setattr(ap_module, "decode_audio", lambda path: np.ones(16000, dtype=np.float32))
+
     class Seg:
         def __init__(self, start, end, text):
             self.start, self.end, self.text = start, end, text
@@ -228,7 +232,7 @@ def test_transcribe_joins_segments(tmp_path):
         language_probability = 0.9
 
     class Model:
-        def transcribe(self, path, beam_size, vad_filter):
+        def transcribe(self, audio, beam_size, vad_filter):
             return iter([Seg(0, 1.234, " Hello"), Seg(1.234, 2, " world ")]), Info()
 
     f = tmp_path / "a.mp3"
