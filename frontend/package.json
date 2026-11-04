@@ -1,6 +1,6 @@
 {
   "name": "frontend",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "private": true,
   "main": "electron.js",
   "scripts": {
@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "electron": "electron .",
-    "build:desktop": "next build && electron-builder --mac"
+    "build:desktop": "next build && electron-builder --mac",
+    "test": "vitest run"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
@@ -30,7 +31,8 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   },
   "build": {
     "appId": "com.tellme.app",
@@ -53,15 +55,40 @@
         ]
       },
       {
-        "from": "../backend/.env",
+        "from": "../backend/desktop.env",
         "to": "backend-service/.env"
+      },
+      {
+        "from": "resources/redis",
+        "to": "redis",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {
       "category": "public.app-category.productivity",
       "target": [
-        "zip"
-      ]
-    }
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "artifactName": "Tell-Me-mac-${arch}.${ext}",
+      "minimumSystemVersion": "12.0",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Tell Me records audio so it can be transcribed and questioned on your Mac."
+      }
+    },
+    "protocols": [
+      {
+        "name": "Tell Me reset link",
+        "schemes": [
+          "tellme"
+        ]
+      }
+    ]
   }
 }

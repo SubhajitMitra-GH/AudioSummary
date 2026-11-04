@@ -1,17 +1,63 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
 import Sidebar from '../components/Sidebar';
 import ChatInterface from '../components/ChatInterface';
 import AudioRecorder from '../components/AudioRecorder';
 import LandingPage from '../components/LandingPage';
 import OllamaSetupWizard from '../components/OllamaSetupWizard';
-import { supabase, Session, ChatMessage } from '../utils/supabase';
+import SetNewPassword from '../components/SetNewPassword';
+import DesktopSignIn from '../components/DesktopSignIn';
+import OnlineMode from '../components/OnlineMode';
+import { isDesktopApp } from '../utils/platform';
+import {
+  supabase, Session, ChatMessage,
+  subscribeAuthLinkError, getAuthLinkError, getAuthLinkErrorServer,
+  subscribePasswordRecovery, getPasswordRecovery, getPasswordRecoveryServer,
+} from '../utils/supabase';
 import { encryptText, decryptText } from '../utils/crypto';
-import { PanelLeftClose, PanelLeftOpen, AudioLines, Sun, Moon } from 'lucide-react';
+import { API_BASE, ENGINE_IS_SERVER, ENGINE_PLACE, apiFetch, canReachLocalEngine, readErrorDetail, ModelOption, ModelsResponse, Passage } from '../utils/api';
+import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { SpeechBars, Wordmark } from '../components/ui/Brand';
+import type { User } from '@supabase/supabase-js';
+import { newId } from '../utils/ids';
+
+type OllamaStatus = {
+  ollama_running: boolean;
+  model_pulled: boolean;
+  configured_model: string;
+};
+
+/** Full-screen state used while local services start. */
+function MachineLoading({ title, status }: { title: string; status: string }) {
+  return (
+    <div className="h-screen w-screen flex flex-col items-center justify-center gap-8 px-6 select-none bg-bg">
+      <Wordmark className="text-[2.2rem]" />
+      <SpeechBars count={36} seed={17} breathing className="h-12 w-[min(320px,70vw)]" activeClass="bg-cobalt" />
+      <div className="text-center flex flex-col items-center gap-1.5" aria-live="polite">
+        <p className="text-[1.05rem] font-medium text-ink">{title}</p>
+        <p className="text-[0.9rem] text-ink-3 max-w-sm">{status}</p>
+      </div>
+    </div>
+  );
+}
+
+/** The desktop marker never changes after load, so there is nothing to subscribe to. */
+const subscribeNothing = () => () => {};
+
+function localNote(sessionId: string, text: string): ChatMessage {
+  return {
+    id: newId(),
+    session_id: sessionId,
+    sender: 'assistant',
+    message_text: text,
+    created_at: new Date().toISOString(),
+    synced: true,
+  };
+}
 
 export default function Home() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -19,9 +65,17 @@ export default function Home() {
   const [loadingSessions, setLoadingSessions] = useState<boolean>(true);
   const [sendingMessage, setSendingMessage] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
-  
-  // State to manage the Auth modal visibility on the landing page
-  const [showAuth, setShowAuth] = useState<boolean>(false);
+  // Passages behind each answer, by message id. Not stored: they show for answers given in this app session.
+  const [sources, setSources] = useState<Record<string, Passage[]>>({});
+
+  // State to manage the Auth modal visibility on the landing page.
+  // Opened straight away when the app was launched from an expired/invalid email link.
+  const [showAuth, setShowAuth] = useState<boolean>(() => Boolean(getAuthLinkError()));
+  // Error from a reset link (website: in the URL; Mac app: a tellme:// link that arrives later).
+  const authLink = useSyncExternalStore(subscribeAuthLinkError, getAuthLinkError, getAuthLinkErrorServer);
+
+  // True while the user is choosing a new password after a "forgot password" link or code.
+  const recoveringPassword = useSyncExternalStore(subscribePasswordRecovery, getPasswordRecovery, getPasswordRecoveryServer);
 
   // Dark mode state
   const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
@@ -44,14 +98,20 @@ export default function Home() {
 
   // States to manage local API startup checks
   const [isBackendReady, setIsBackendReady] = useState<boolean>(false);
-  const [backendStatus, setBackendStatus] = useState<string>('Initializing...');
+  const [backendStatus, setBackendStatus] = useState<string>(ENGINE_IS_SERVER ? 'Connecting to the online engine…' : 'Starting the local engine…');
+  // Web only: the local engine (FastAPI on this computer) didn't answer, so offer online mode.
+  const [engineOffline, setEngineOffline] = useState<boolean>(false);
+
+  // Inside the Mac app (Electron preload sets window.tellme). Server render assumes the website.
+  const desktop = useSyncExternalStore(subscribeNothing, isDesktopApp, () => false);
+  // False on the hosted website: there is no engine to look for, so signed-in users get online mode at once.
+  const engineReachable = useSyncExternalStore(subscribeNothing, canReachLocalEngine, () => true);
 
   // State to check Ollama and local model installation status
-  const [ollamaStatus, setOllamaStatus] = useState<{
-    ollama_running: boolean;
-    model_pulled: boolean;
-    configured_model: string;
-  } | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+
+  // Local AI models the user can choose from
+  const [models, setModels] = useState<ModelOption[]>([]);
 
   // Keep a mutable reference to the active session ID to avoid trigger re-runs inside event listeners
   const currentSessionIdRef = useRef<string | null>(currentSessionId);
@@ -68,10 +128,11 @@ export default function Home() {
   // 0. Startup Health Check: Ping the FastAPI backend /health endpoint
   useEffect(() => {
     let active = true;
-    
+    if (!canReachLocalEngine()) return; // hosted website: never probe the visitor's 127.0.0.1
+
     const checkHealth = async () => {
       try {
-        const res = await fetch('http://localhost:8000/health');
+        const res = await fetch(`${API_BASE}/health`);
         if (res.ok) {
           const data = await res.json();
           if (data.status === 'healthy') {
@@ -83,13 +144,15 @@ export default function Home() {
           }
         }
         if (active) {
-          setBackendStatus('Redis connection startup in progress...');
+          setBackendStatus(ENGINE_IS_SERVER ? 'Starting the online engine…' : 'Starting the local database…');
           setTimeout(checkHealth, 1500);
         }
-      } catch (err) {
+      } catch {
         if (active) {
-          setBackendStatus('Waiting for local audio summarization engines to boot...');
-          setTimeout(checkHealth, 1500);
+          setBackendStatus('Starting transcription and search on this Mac… The first launch after installing can take a couple of minutes.');
+          // In a browser the engine may simply not be installed: offer online mode, keep checking slowly.
+          if (!isDesktopApp()) setEngineOffline(true);
+          setTimeout(checkHealth, isDesktopApp() ? 1500 : 5000);
         }
       }
     };
@@ -102,26 +165,62 @@ export default function Home() {
 
   const checkOllamaStatus = useCallback(async () => {
     try {
-      const res = await fetch('http://localhost:8000/ollama/status');
+      const res = await fetch(`${API_BASE}/ollama/status`);
       if (res.ok) {
-        const data = await res.json();
-        setOllamaStatus(data);
+        setOllamaStatus(await res.json());
       }
     } catch (err) {
       console.error('Failed to check Ollama status:', err);
     }
   }, []);
 
+  const fetchModels = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/models`);
+      if (res.ok) {
+        const data: ModelsResponse = await res.json();
+        setModels(data.models);
+      }
+    } catch (err) {
+      console.error('Failed to load AI models:', err);
+    }
+  }, []);
+
   useEffect(() => {
     if (isBackendReady) {
       checkOllamaStatus();
+      fetchModels();
     }
-  }, [isBackendReady, checkOllamaStatus]);
+  }, [isBackendReady, checkOllamaStatus, fetchModels]);
 
-  // 1. Get/Listen to auth state (ONLY after backend is ready)
+  /** Switch the AI model used for answers. Throws if the backend refuses. */
+  const selectModel = useCallback(async (modelId: string) => {
+    const res = await apiFetch('/models/active', {
+      method: 'PUT',
+      body: JSON.stringify({ model: modelId }),
+    });
+    if (!res.ok) throw new Error(await readErrorDetail(res));
+    const data: ModelsResponse = await res.json();
+    setModels(data.models);
+    // If the new model isn't downloaded yet, this shows the setup screen with a download button.
+    await checkOllamaStatus();
+  }, [checkOllamaStatus]);
+
+  const refreshModelsAndStatus = useCallback(async () => {
+    await Promise.all([checkOllamaStatus(), fetchModels()]);
+  }, [checkOllamaStatus, fetchModels]);
+
+  const handleSidebarModelChange = async (modelId: string) => {
+    try {
+      await selectModel(modelId);
+    } catch (e) {
+      console.error('Failed to switch model:', e);
+      alert(`Could not switch model: ${e instanceof Error ? e.message : 'unknown error'}`);
+    }
+  };
+
+  // 1. Get/Listen to auth state (doesn't need the local engine)
   useEffect(() => {
-    if (!isBackendReady) return;
-
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setAuthLoading(false);
@@ -133,63 +232,69 @@ export default function Home() {
     });
 
     return () => subscription.unsubscribe();
-  }, [isBackendReady]);
+  }, []);
 
-  const fetchSessions = useCallback(async (retryCount = 0) => {
+  const fetchSessions = useCallback(async () => {
     if (!user) return;
-    setLoadingSessions(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      // Fetch from local-first mediator backend API
-      const res = await fetch('http://localhost:8000/sessions', {
-        headers: {
-          'Authorization': `Bearer ${token}`
+    const attempt = async (retryCount: number) => {
+      setLoadingSessions(true);
+      try {
+        // Fetch from local-first mediator backend API
+        const res = await apiFetch('/sessions');
+        if (!res.ok) throw new Error(`Status ${res.status}`);
+        const data = await res.json();
+        setSessions(data || []);
+      } catch (e) {
+        console.error('Failed to fetch sessions:', e);
+        // Auto-retry on connection failures (e.g. backend starting up)
+        if (e instanceof TypeError && retryCount < 10) {
+          setTimeout(() => attempt(retryCount + 1), 2000);
         }
-      });
-      if (!res.ok) throw new Error(`Status ${res.status}`);
-      const data = await res.json();
-      setSessions(data || []);
-    } catch (e: any) {
-      console.error('Failed to fetch sessions:', e);
-      // Auto-retry on connection failures (e.g. backend starting up)
-      if (e instanceof TypeError && retryCount < 10) {
-        console.log(`Connection refused. Retrying fetchSessions in 2s (Attempt ${retryCount + 1}/10)...`);
-        setTimeout(() => fetchSessions(retryCount + 1), 2000);
+      } finally {
+        setLoadingSessions(false);
       }
-    } finally {
-      setLoadingSessions(false);
-    }
+    };
+    await attempt(0);
   }, [user]);
 
-  const fetchMessages = useCallback(async (sessionId: string, retryCount = 0) => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      // Fetch messages from local-first mediator backend API
-      const res = await fetch(`http://localhost:8000/sessions/${sessionId}/messages`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
+  const fetchMessages = useCallback(async (sessionId: string) => {
+    const attempt = async (retryCount: number) => {
+      try {
+        // Fetch messages from local-first mediator backend API
+        const res = await apiFetch(`/sessions/${sessionId}/messages`);
+        if (!res.ok) throw new Error(`Status ${res.status}`);
+        const data: ChatMessage[] = await res.json();
+        setMessages((data || []).map((msg) => ({ ...msg, message_text: decryptText(msg.message_text) })));
+      } catch (e) {
+        console.error('Failed to fetch messages:', e);
+        // Auto-retry on connection failures
+        if (e instanceof TypeError && retryCount < 10) {
+          setTimeout(() => attempt(retryCount + 1), 2000);
         }
-      });
-      if (!res.ok) throw new Error(`Status ${res.status}`);
-      const data = await res.json();
-      setMessages((data || []).map((msg: any) => ({ ...msg, message_text: decryptText(msg.message_text) })));
-    } catch (e: any) {
-      console.error('Failed to fetch messages:', e);
-      // Auto-retry on connection failures
-      if (e instanceof TypeError && retryCount < 10) {
-        console.log(`Connection refused. Retrying fetchMessages in 2s (Attempt ${retryCount + 1}/10)...`);
-        setTimeout(() => fetchMessages(sessionId, retryCount + 1), 2000);
       }
-    }
+    };
+    await attempt(0);
+  }, []);
+
+  /** Encrypt and store one message. Throws if the backend did not save it. */
+  const saveMessage = useCallback(async (msg: ChatMessage) => {
+    const res = await apiFetch('/messages', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: msg.id,
+        session_id: msg.session_id,
+        sender: msg.sender,
+        message_text: encryptText(msg.message_text),
+        created_at: msg.created_at,
+      }),
+    });
+    if (!res.ok) throw new Error(await readErrorDetail(res));
   }, []);
 
   // 2. Fetch sessions initially when user logs in
   useEffect(() => {
     if (user) {
+      if (!isBackendReady) return; // online mode reads the cloud directly
       if (lastFetchedUserIdRef.current !== user.id) {
         lastFetchedUserIdRef.current = user.id;
         fetchSessions();
@@ -199,7 +304,7 @@ export default function Home() {
       setSessions([]);
       setCurrentSessionId(null);
     }
-  }, [user, fetchSessions]);
+  }, [user, fetchSessions, isBackendReady]);
 
   // 3. Configure browser online reconnect sync listener (triggered ONLY on reconnect, NOT on sidebar navigation)
   useEffect(() => {
@@ -207,29 +312,21 @@ export default function Home() {
       lastSyncedUserIdRef.current = null;
       return;
     }
+    if (!isBackendReady) return;
 
     const handleOnlineSync = async (retryCount = 0) => {
-      console.log("Device is online. Triggering synchronization...");
       try {
-        const { data: { session: sAuth } } = await supabase.auth.getSession();
-        const token = sAuth?.access_token;
-        if (token) {
-          const res = await fetch('http://localhost:8000/sync', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (!res.ok) throw new Error();
-          fetchSessions();
-          const activeSessionId = currentSessionIdRef.current;
-          if (activeSessionId) {
-            fetchMessages(activeSessionId);
-          }
+        const res = await apiFetch('/sync', { method: 'POST' });
+        if (!res.ok) throw new Error(await readErrorDetail(res));
+        fetchSessions();
+        const activeSessionId = currentSessionIdRef.current;
+        if (activeSessionId) {
+          fetchMessages(activeSessionId);
         }
-      } catch (err: any) {
-        console.error("Failed to trigger automatic sync:", err);
+      } catch (err) {
+        console.error('Failed to trigger automatic sync:', err);
         // Auto-retry on connection failures
         if (err instanceof TypeError && retryCount < 10) {
-          console.log(`Connection refused. Retrying handleOnlineSync in 2s (Attempt ${retryCount + 1}/10)...`);
           setTimeout(() => handleOnlineSync(retryCount + 1), 2000);
         }
       }
@@ -249,7 +346,7 @@ export default function Home() {
     return () => {
       window.removeEventListener('online', onOnlineEvent);
     };
-  }, [user, fetchSessions, fetchMessages]);
+  }, [user, fetchSessions, fetchMessages, isBackendReady]);
 
   useEffect(() => {
     if (currentSessionId) {
@@ -259,19 +356,24 @@ export default function Home() {
     }
   }, [currentSessionId, fetchMessages]);
 
-  const handleSelectSession = (id: string) => setCurrentSessionId(id);
-  const handleCreateNewSession = () => setCurrentSessionId(null);
+  // On narrow windows the sidebar overlays the content, so tuck it away after a choice.
+  const closeSidebarIfNarrow = () => {
+    if (window.matchMedia('(max-width: 767px)').matches) setIsSidebarOpen(false);
+  };
+  const handleSelectSession = (id: string) => {
+    setCurrentSessionId(id);
+    closeSidebarIfNarrow();
+  };
+  const handleCreateNewSession = () => {
+    setCurrentSessionId(null);
+    closeSidebarIfNarrow();
+  };
 
   const handleIngestSuccess = async (sessionId: string, transcript: string) => {
     // Check if messages already exist in this session to see if it's an existing workspace
     let isExisting = false;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      
-      const res = await fetch(`http://localhost:8000/sessions/${sessionId}/messages`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await apiFetch(`/sessions/${sessionId}/messages`);
       if (res.ok) {
         const data = await res.json();
         if (data && data.length > 0) isExisting = true;
@@ -280,143 +382,87 @@ export default function Home() {
       console.error('Error checking message count:', err);
     }
 
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token;
-
-    if (isExisting) {
-      try {
-        const appendText = transcript
-          ? `Added new source to workspace transcript:\n\n"${transcript}"\n\nYou can query information across all uploaded audio files in this session.`
-          : `Audio source added, no speech recognized in the stream.`;
-          
-        const res = await fetch('http://localhost:8000/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            id: crypto.randomUUID(),
-            session_id: sessionId,
-            sender: 'assistant',
-            message_text: encryptText(appendText),
-            created_at: new Date().toISOString()
-          })
-        });
-        if (!res.ok) throw new Error();
-        await fetchMessages(sessionId);
-      } catch (e) {
-        console.error('Failed to insert append status:', e);
-      }
-      return;
-    }
+    const text = isExisting
+      ? (transcript
+        ? `Added another recording to this conversation. It begins:\n\n"${transcript}"\n\nQuestions now search every recording here.`
+        : `Added another recording to this conversation, but no speech was found in it.`)
+      : (transcript
+        ? `Transcribed and indexed on ${ENGINE_PLACE}. It begins:\n\n"${transcript}"\n\nAsk anything about what was said.`
+        : `Transcribed and indexed, but no speech was found in this recording.`);
 
     try {
-      await fetchSessions();
-      setCurrentSessionId(sessionId);
-      
-      const introText = transcript
-        ? `RAG indexing complete. Transcript excerpt:\n\n"${transcript}"\n\nAsk questions about the recording details, statements, or timelines.`
-        : `Ingestion complete. No vocal speech was detected in the audio.`;
-        
-      const res = await fetch('http://localhost:8000/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          id: crypto.randomUUID(),
-          session_id: sessionId,
-          sender: 'assistant',
-          message_text: encryptText(introText),
-          created_at: new Date().toISOString()
-        })
+      if (!isExisting) {
+        await fetchSessions();
+        setCurrentSessionId(sessionId);
+      }
+      await saveMessage({
+        id: newId(),
+        session_id: sessionId,
+        sender: 'assistant',
+        message_text: text,
+        created_at: new Date().toISOString(),
       });
-      if (!res.ok) throw new Error();
       await fetchMessages(sessionId);
     } catch (e) {
       console.error('Failed to initialize session:', e);
-      alert('Failed to sync session with local/cloud database.');
+      alert('The audio was indexed, but the summary message could not be saved.');
     }
   };
 
   const handleSendMessage = async (text: string) => {
     if (!currentSessionId || sendingMessage) return;
+    const sessionId = currentSessionId;
     setSendingMessage(true);
-    const uid = crypto.randomUUID();
-    setMessages(prev => [
-      ...prev,
-      { id: uid, session_id: currentSessionId, sender: 'user', message_text: text, created_at: new Date().toISOString(), synced: false }
-    ]);
+    const userMessage: ChatMessage = {
+      id: newId(),
+      session_id: sessionId,
+      sender: 'user',
+      message_text: text,
+      created_at: new Date().toISOString(),
+      synced: false,
+    };
+    setMessages(prev => [...prev, userMessage]);
 
     try {
-      const { data: { session: sAuth } } = await supabase.auth.getSession();
-      const token = sAuth?.access_token;
-
       // 1. Save user message to backend local-first endpoint
-      await fetch('http://localhost:8000/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          id: uid,
-          session_id: currentSessionId,
-          sender: 'user',
-          message_text: encryptText(text),
-          created_at: new Date().toISOString()
-        })
-      });
+      await saveMessage(userMessage);
 
       // 2. Query RAG backend (which searches local Redis vector store)
-      const res = await fetch('http://localhost:8000/chat', {
+      const res = await apiFetch('/chat', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ question: text, audio_id: currentSessionId }),
+        body: JSON.stringify({ question: text, audio_id: sessionId }),
       });
-      if (!res.ok) throw new Error(`Status ${res.status}`);
+      if (!res.ok) throw new Error(await readErrorDetail(res));
       const data = await res.json();
-      const aid = crypto.randomUUID();
+
+      const assistantMessage: ChatMessage = {
+        id: newId(),
+        session_id: sessionId,
+        sender: 'assistant',
+        message_text: data.answer,
+        created_at: new Date().toISOString(),
+        synced: false,
+      };
+      setMessages(prev => [...prev, assistantMessage]);
+      if (Array.isArray(data.context)) {
+        setSources(prev => ({ ...prev, [assistantMessage.id]: data.context as Passage[] }));
+      }
 
       // 3. Save assistant response to backend local-first endpoint
-      await fetch('http://localhost:8000/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          id: aid,
-          session_id: currentSessionId,
-          sender: 'assistant',
-          message_text: encryptText(data.answer),
-          created_at: new Date().toISOString()
-        })
-      });
-
-      setMessages(prev => [
-        ...prev,
-        { id: aid, session_id: currentSessionId, sender: 'assistant', message_text: data.answer, created_at: new Date().toISOString(), synced: false }
-      ]);
-      fetchMessages(currentSessionId); // Refresh message list to update sync indicators
-    } catch (e: any) {
+      try {
+        await saveMessage(assistantMessage);
+        fetchMessages(sessionId); // Refresh message list to update sync indicators
+      } catch (saveErr) {
+        console.error('Failed to save answer:', saveErr);
+        setMessages(prev => [...prev, localNote(sessionId,
+          'Note: this answer could not be saved and will not appear when you reopen this conversation.')]);
+      }
+    } catch (e) {
       console.error('Error during chat:', e);
-      setMessages(prev => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          session_id: currentSessionId,
-          sender: 'assistant',
-          message_text: 'Error: Could not retrieve answer from local RAG server. Make sure Python app.main is running.',
-          created_at: new Date().toISOString(),
-          synced: true
-        }
-      ]);
+      const reason = e instanceof TypeError
+        ? 'Could not reach the local server. Make sure the backend is running.'
+        : (e instanceof Error ? e.message : 'Unknown error.');
+      setMessages(prev => [...prev, localNote(sessionId, `Error: ${reason}`)]);
     } finally {
       setSendingMessage(false);
     }
@@ -425,18 +471,10 @@ export default function Home() {
   const handleDeleteSession = async (id: string) => {
     if (!confirm('Are you sure you want to delete this conversation?')) return;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
       // Call mediator backend API to delete from local Redis and trigger background Supabase delete
-      const res = await fetch(`http://localhost:8000/sessions/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      if (!res.ok) throw new Error();
-      
+      const res = await apiFetch(`/sessions/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await readErrorDetail(res));
+
       setSessions(prev => prev.filter(s => s.id !== id));
       if (currentSessionId === id) {
         setCurrentSessionId(null);
@@ -449,23 +487,13 @@ export default function Home() {
 
   const handleRenameSession = async (id: string, newTitle: string) => {
     try {
-      const encrypted = encryptText(newTitle);
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      const res = await fetch('http://localhost:8000/sessions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          id: id,
-          session_title: encrypted
-        })
+      const res = await apiFetch(`/sessions/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ session_title: encryptText(newTitle) }),
       });
-      if (!res.ok) throw new Error();
-      setSessions(prev => prev.map(s => s.id === id ? { ...s, session_title: encrypted, synced: false } : s));
+      if (!res.ok) throw new Error(await readErrorDetail(res));
+      const updated: Session = await res.json();
+      setSessions(prev => prev.map(s => s.id === id ? { ...s, ...updated } : s));
     } catch (e) {
       console.error('Failed to rename session:', e);
       alert('Failed to rename session.');
@@ -473,143 +501,62 @@ export default function Home() {
   };
 
   const activeTitle = (() => {
-    if (!currentSessionId) return 'Workspace Ingest';
+    if (!currentSessionId) return 'New recording';
     const s = sessions.find(s => s.id === currentSessionId);
-    return s ? (decryptText(s.session_title) || 'Untitled') : 'Workspace Chat';
+    return s ? (decryptText(s.session_title) || 'Untitled') : 'Conversation';
   })();
 
-  if (!isBackendReady) {
+  if (authLoading) {
+    return <MachineLoading title="Starting Tell Me…" status="Checking your sign-in." />;
+  }
+
+  // A password-reset link/code was used: choose a new password before anything else.
+  if (recoveringPassword) {
+    return <SetNewPassword hasSession={Boolean(user)} />;
+  }
+
+  // Signed out: the Mac app opens on sign-in; the website shows the landing page.
+  if (!user) {
+    if (desktop) return <DesktopSignIn authError={authLink?.message ?? null} authErrorKey={authLink?.seq ?? 0} />;
     return (
-      <div className="h-screen w-screen flex overflow-hidden select-none" style={{ background: 'var(--bg-surface)' }}>
-        {/* Sidebar Skeleton */}
-        <div className="w-72 h-full p-6 flex flex-col gap-6 shrink-0"
-          style={{ borderRight: '1px solid var(--border)', background: 'var(--bg-sidebar)' }}>
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg animate-pulse" style={{ background: 'var(--skeleton-bg)' }} />
-            <div className="h-4 w-24 rounded animate-pulse" style={{ background: 'var(--skeleton-bg)' }} />
-          </div>
-          <div className="w-full h-9 rounded-full animate-pulse mt-2" style={{ background: 'var(--skeleton-bg)', opacity: 0.6 }} />
-          <div className="flex-1 flex flex-col gap-4 mt-6">
-            <div className="h-8 w-[85%] rounded-lg animate-pulse" style={{ background: 'var(--skeleton-bg)', opacity: 0.8 }} />
-            <div className="h-8 w-[70%] rounded-lg animate-pulse" style={{ background: 'var(--skeleton-bg)', opacity: 0.5 }} />
-            <div className="h-8 w-[90%] rounded-lg animate-pulse" style={{ background: 'var(--skeleton-bg)', opacity: 0.5 }} />
-            <div className="h-8 w-[60%] rounded-lg animate-pulse" style={{ background: 'var(--skeleton-bg)', opacity: 0.3 }} />
-          </div>
-        </div>
-        {/* Main Workspace Skeleton */}
-        <div className="flex-1 flex flex-col h-full overflow-hidden">
-          <div className="h-14 px-6 flex items-center justify-between shrink-0"
-            style={{ borderBottom: '1px solid var(--border)' }}>
-            <div className="flex items-center gap-3">
-              <div className="w-6 h-6 rounded animate-pulse" style={{ background: 'var(--skeleton-bg)' }} />
-              <div className="h-4 w-px" style={{ background: 'var(--border)' }} />
-              <div className="h-3 w-32 rounded animate-pulse" style={{ background: 'var(--skeleton-bg)' }} />
-            </div>
-          </div>
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center gap-4"
-            style={{ background: 'var(--bg-primary)' }}>
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center animate-bounce shadow-sm"
-              style={{ background: 'var(--accent-bg)', border: '1px solid var(--accent-border)', color: 'var(--accent)' }}>
-              <AudioLines className="w-8 h-8 animate-pulse" />
-            </div>
-            <h2 className="text-base font-bold tracking-tight mt-2" style={{ color: 'var(--text-primary)' }}>
-              Initializing Workspace Environment
-            </h2>
-            <p className="text-xs font-semibold max-w-sm leading-relaxed animate-pulse" style={{ color: 'var(--text-muted)' }}>
-              {backendStatus}
-            </p>
-          </div>
-        </div>
-      </div>
+      <LandingPage
+        onLaunchApp={() => setShowAuth(true)}
+        showAuth={showAuth}
+        onCloseAuth={() => setShowAuth(false)}
+        authError={authLink?.message ?? null}
+      />
     );
   }
 
+  // Signed in, but the local engine isn't running here (website on a computer without the app).
+  if (!isBackendReady) {
+    if (!desktop && (engineOffline || !engineReachable)) return <OnlineMode user={user} isDarkMode={isDarkMode} onToggleTheme={toggleTheme} />;
+    return <MachineLoading title="Starting Tell Me…" status={backendStatus} />;
+  }
+
   if (ollamaStatus === null) {
-    return (
-      <div className="h-screen w-screen flex overflow-hidden select-none" style={{ background: 'var(--bg-surface)' }}>
-        {/* Sidebar Skeleton */}
-        <div className="w-72 h-full p-6 flex flex-col gap-6 shrink-0"
-          style={{ borderRight: '1px solid var(--border)', background: 'var(--bg-sidebar)' }}>
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg animate-pulse" style={{ background: 'var(--skeleton-bg)' }} />
-            <div className="h-4 w-24 rounded animate-pulse" style={{ background: 'var(--skeleton-bg)' }} />
-          </div>
-          <div className="w-full h-9 rounded-full animate-pulse mt-2" style={{ background: 'var(--skeleton-bg)', opacity: 0.6 }} />
-          <div className="flex-1 flex flex-col gap-4 mt-6">
-            <div className="h-8 w-[85%] rounded-lg animate-pulse" style={{ background: 'var(--skeleton-bg)', opacity: 0.8 }} />
-            <div className="h-8 w-[70%] rounded-lg animate-pulse" style={{ background: 'var(--skeleton-bg)', opacity: 0.5 }} />
-            <div className="h-8 w-[90%] rounded-lg animate-pulse" style={{ background: 'var(--skeleton-bg)', opacity: 0.5 }} />
-            <div className="h-8 w-[60%] rounded-lg animate-pulse" style={{ background: 'var(--skeleton-bg)', opacity: 0.3 }} />
-          </div>
-        </div>
-        {/* Main Workspace Skeleton */}
-        <div className="flex-1 flex flex-col h-full overflow-hidden">
-          <div className="h-14 px-6 flex items-center justify-between shrink-0"
-            style={{ borderBottom: '1px solid var(--border)' }}>
-            <div className="flex items-center gap-3">
-              <div className="w-6 h-6 rounded animate-pulse" style={{ background: 'var(--skeleton-bg)' }} />
-              <div className="h-4 w-px" style={{ background: 'var(--border)' }} />
-              <div className="h-3 w-32 rounded animate-pulse" style={{ background: 'var(--skeleton-bg)' }} />
-            </div>
-          </div>
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center gap-4"
-            style={{ background: 'var(--bg-primary)' }}>
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center animate-bounce shadow-sm"
-              style={{ background: 'var(--accent-bg)', border: '1px solid var(--accent-border)', color: 'var(--accent)' }}>
-              <AudioLines className="w-8 h-8 animate-pulse" />
-            </div>
-            <h2 className="text-base font-bold tracking-tight mt-2" style={{ color: 'var(--text-primary)' }}>
-              Checking Local AI Engines
-            </h2>
-            <p className="text-xs text-slate-400 font-semibold max-w-sm leading-relaxed animate-pulse">
-              Verifying model config status...
-            </p>
-          </div>
-        </div>
-      </div>
-    );
+    return <MachineLoading title="Checking the local AI model…" status="Asking Ollama which models are installed." />;
   }
 
   if (!ollamaStatus.ollama_running || !ollamaStatus.model_pulled) {
     return (
       <OllamaSetupWizard
         status={ollamaStatus}
-        onComplete={checkOllamaStatus}
+        models={models}
+        onSelectModel={selectModel}
+        onComplete={refreshModelsAndStatus}
       />
     );
   }
 
-  if (authLoading) {
-    return (
-      <div className="min-h-screen w-full flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-md animate-pulse" style={{ background: 'var(--accent)' }}>
-            <span className="text-lg font-bold" style={{ color: 'var(--text-on-accent)' }}>✨</span>
-          </div>
-          <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>Restoring active session...</span>
-        </div>
-      </div>
-    );
-  }
-
-  // Display the landing page if the user is not authenticated
-  if (!user) {
-    return (
-      <LandingPage
-        onLaunchApp={() => setShowAuth(true)}
-        showAuth={showAuth}
-        onCloseAuth={() => setShowAuth(false)}
-      />
-    );
-  }
+  const activeModel = models.find((m) => m.active);
 
   return (
-    <main className="h-screen w-screen flex overflow-hidden app-bg">
+    <main className="relative h-screen w-screen flex overflow-hidden bg-bg">
       {/* Sidebar navigation */}
       <div
-        className={`h-full overflow-hidden transition-all duration-300 ease-in-out shrink-0 ${
-          isSidebarOpen ? 'w-72' : 'w-0'
-        }`}
+        className={`h-full overflow-hidden shrink-0 max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 ${isSidebarOpen ? 'w-72 max-md:shadow-2xl' : 'w-0'}`}
+        style={{ transition: 'width 320ms var(--ease-out)' }}
       >
         <Sidebar
           sessions={sessions}
@@ -621,34 +568,36 @@ export default function Home() {
           onRenameSession={handleRenameSession}
           isDarkMode={isDarkMode}
           onToggleTheme={toggleTheme}
+          models={models}
+          onSelectModel={handleSidebarModelChange}
         />
       </div>
 
       {/* Main app space */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden">
-        {/* Top Header */}
-        <header className="h-14 px-6 flex items-center justify-between shrink-0"
-          style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
-          <div className="flex items-center gap-3">
+      <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
+        <header className="h-14 px-4 sm:px-6 flex items-center justify-between gap-4 shrink-0 border-b border-line bg-surface">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-1.5 rounded-lg transition-all cursor-pointer"
-              style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+              aria-label={isSidebarOpen ? 'Hide conversations' : 'Show conversations'}
+              className="p-2 rounded-lg text-ink-2 hover:text-ink hover:bg-sunk cursor-pointer"
             >
               {isSidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
             </button>
-            <div className="h-4 w-px" style={{ background: 'var(--border)' }} />
-            <span className="text-xs font-semibold tracking-tight truncate max-w-[320px]"
-              style={{ color: 'var(--text-primary)' }}>
-              {activeTitle}
-            </span>
+            {currentSessionId === null && <h1 className="font-semibold text-[1rem] truncate">{activeTitle}</h1>}
           </div>
+          {activeModel && (
+            <p className="hidden sm:flex items-center gap-2 shrink-0 text-ink-3" title="The local model writing answers. Change it in the sidebar.">
+              <span className="w-1.5 h-1.5 rounded-full bg-success" aria-hidden="true" />
+              <span className="text-[0.85rem] text-ink-2">{activeModel.label}</span>
+              <span className="t-num text-[0.72rem]">{activeModel.id}</span>
+            </p>
+          )}
         </header>
 
-        {/* Dynamic content view */}
-        <div className="flex-1 overflow-hidden flex flex-col" style={{ background: 'var(--bg-surface)' }}>
+        <div className="flex-1 overflow-hidden flex flex-col">
           {currentSessionId === null ? (
-            <div className="w-full h-full overflow-y-auto flex items-center justify-center p-6 app-bg">
+            <div className="w-full h-full overflow-y-auto flex items-start lg:items-center justify-center">
               <AudioRecorder
                 onIngestSuccess={handleIngestSuccess}
                 currentSessionId={currentSessionId}
@@ -659,8 +608,11 @@ export default function Home() {
             <ChatInterface
               messages={messages}
               currentSessionId={currentSessionId}
+              sessionTitle={activeTitle}
               onSendMessage={handleSendMessage}
+              onIngestSuccess={handleIngestSuccess}
               sending={sendingMessage}
+              sources={sources}
             />
           )}
         </div>

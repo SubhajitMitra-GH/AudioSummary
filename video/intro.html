@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tell Me. intro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Figtree:wght@400..800&family=JetBrains+Mono:wght@400..700&display=block" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f8fa; --surface: #fff; --sunk: #eef0f4; --ink: #0e1116; --ink-2: #454c5a; --ink-3: #646b79;
+    --line: #e3e6ec; --cobalt: #2f5bff; --cobalt-wash: #ecf1ff; --lime: #d4ff3f; --ember: #e2552e; --ember-wash: #fdeee9;
+    --success: #12805c;
+    --float: 0 3px 6px rgba(14,17,22,.04), 0 24px 60px rgba(14,17,22,.07);
+    --pop: 0 4px 10px rgba(14,17,22,.05), 0 50px 120px rgba(14,17,22,.14);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1080px; height: 1920px; overflow: hidden; background: var(--bg); }
+  body { font-family: Figtree, system-ui, sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; }
+  #stage { position: relative; width: 1080px; height: 1920px; overflow: hidden; background: var(--bg); }
+  .scene { position: absolute; inset: 0; will-change: transform, opacity; }
+  .abs { position: absolute; }
+  .display { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700; letter-spacing: -0.035em; line-height: 1; font-variation-settings: 'opsz' 96; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .h { left: 80px; right: 80px; font-size: 112px; }
+  .line { display: block; }
+  .hl { background-image: linear-gradient(var(--lime), var(--lime)); background-repeat: no-repeat; background-position: 0 88%; background-size: 0% 46%; padding: 0 6px; margin: 0 -6px; }
+  .hl.full { background-position: 0 50%; }
+  .card { background: var(--surface); border-radius: 52px; box-shadow: var(--float); border: 2px solid var(--line); }
+  .card.pop { box-shadow: var(--pop); }
+  .icon { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .bars { display: flex; align-items: center; gap: 8px; }
+  .bars i { display: block; width: 10px; border-radius: 6px; background: var(--line); }
+  .pill { display: inline-flex; align-items: center; gap: 16px; border-radius: 999px; }
+  .tag { font-size: 26px; color: var(--ink-3); }
+  .caret { display: inline-block; width: 4px; height: 1em; background: var(--cobalt); vertical-align: -0.15em; margin-left: 3px; }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- S1: the hook -->
+  <section class="scene" id="s1">
+    <h1 class="abs display h" style="top:250px">
+      <span class="line" id="s1a">A 2-hour</span>
+      <span class="line" id="s1b">meeting.</span>
+    </h1>
+    <div class="abs card pop" id="s1card" style="left:80px; right:80px; top:740px; padding:56px 56px 52px">
+      <div style="display:flex; align-items:center; gap:28px">
+        <div style="width:112px; height:112px; border-radius:56px; background:var(--ink); color:#fff; display:grid; place-items:center; font-size:44px">
+          <svg class="icon" viewBox="0 0 24 24" style="fill:#fff; stroke:#fff"><polygon points="7 4 19 12 7 20 7 4"/></svg>
+        </div>
+        <div>
+          <div style="font-size:40px; font-weight:650">Weekly team sync.m4a</div>
+          <div class="mono" style="font-size:30px; color:var(--ink-3); margin-top:8px"><span id="s1time">00:14:32</span> / 02:00:00</div>
+        </div>
+      </div>
+      <div class="bars" id="s1wave" style="height:150px; margin-top:44px; gap:7px"></div>
+      <div style="display:flex; justify-content:space-between; margin-top:26px; font-size:30px; color:var(--ink-3)">
+        <span>Playing at 1×</span><span class="mono" id="s1left">1:45:28 left</span>
+      </div>
+    </div>
+    <h2 class="abs display" id="s1c" style="left:80px; right:80px; top:1290px; font-size:96px">
+      <span class="line">Don't listen to it</span>
+      <span class="line"><span class="hl" id="s1hl">all again.</span></span>
+    </h2>
+  </section>
+
+  <!-- S2: brand reveal on cobalt -->
+  <section class="scene" id="s2">
+    <div class="abs" id="s2wipe" style="left:-760px; top:-280px; width:2600px; height:2600px; border-radius:50%; background:var(--cobalt)"></div>
+    <div class="abs" id="s2logo" style="left:50%; top:560px; width:280px; height:280px; margin-left:-140px">
+      <svg viewBox="0 0 64 64" width="280" height="280">
+        <rect width="64" height="64" rx="15" fill="#fff"/>
+        <rect id="lb1" x="11" y="23" width="7" height="18" rx="3.5" fill="#2F5BFF"/>
+        <rect id="lb2" x="21.5" y="14" width="7" height="36" rx="3.5" fill="#2F5BFF"/>
+        <rect id="lb3" x="32" y="20" width="7" height="24" rx="3.5" fill="#2F5BFF"/>
+        <circle id="lb4" cx="47.5" cy="45" r="5" fill="#D4FF3F"/>
+      </svg>
+    </div>
+    <div class="abs display" id="s2word" style="left:0; right:0; top:930px; text-align:center; font-size:220px; color:#fff">
+      Tell Me<span id="s2dot" style="color:var(--lime); display:inline-block">.</span>
+    </div>
+    <div class="abs" id="s2tag" style="left:80px; right:80px; top:1220px; text-align:center; font-size:62px; font-weight:600; color:#fff; line-height:1.25">
+      Ask your recordings<br><span class="hl full" id="s2hl" style="color:#fff; padding:0 14px">anything.</span>
+    </div>
+  </section>
+
+  <!-- S3: three ways in -->
+  <section class="scene" id="s3" style="background:var(--bg); border-radius:72px 72px 0 0">
+    <h1 class="abs display h" style="top:250px; font-size:108px">
+      <span class="line"><span id="s3w1">Record.</span> <span id="s3w2">Upload.</span></span>
+      <span class="line" id="s3w3">Paste a link.</span>
+    </h1>
+    <div class="abs card" id="s3c1" style="left:80px; right:80px; top:610px; height:260px; padding:0 52px; display:flex; align-items:center; gap:36px">
+      <div style="width:132px; height:132px; flex:none; border-radius:66px; background:var(--cobalt); color:#fff; display:grid; place-items:center; font-size:60px">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+      </div>
+      <div style="flex:1; min-width:0; overflow:hidden">
+        <div style="font-size:40px; font-weight:650">Recording</div>
+        <div class="bars" id="s3meter" style="height:80px; margin-top:12px; gap:7px"></div>
+      </div>
+      <div class="mono" id="s3timer" style="font-size:40px; color:var(--ink-2)">00:00</div>
+    </div>
+    <div class="abs card" id="s3c2" style="left:80px; right:80px; top:910px; height:260px; padding:0 52px; display:flex; align-items:center; gap:36px">
+      <div style="width:132px; height:132px; flex:none; border-radius:36px; background:var(--cobalt-wash); color:var(--cobalt); display:grid; place-items:center; font-size:60px">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+      </div>
+      <div style="flex:1">
+        <div style="display:flex; justify-content:space-between; align-items:baseline">
+          <span style="font-size:40px; font-weight:650">lecture-week-6.mp3</span>
+          <span class="mono" style="font-size:30px; color:var(--ink-3)">48 MB</span>
+        </div>
+        <div style="height:18px; border-radius:9px; background:var(--sunk); margin-top:26px; overflow:hidden">
+          <div id="s3prog" style="height:100%; width:0%; border-radius:9px; background:var(--cobalt)"></div>
+        </div>
+      </div>
+    </div>
+    <div class="abs card" id="s3c3" style="left:80px; right:80px; top:1210px; height:260px; padding:0 52px; display:flex; align-items:center; gap:36px">
+      <div style="width:132px; height:132px; flex:none; border-radius:36px; background:var(--cobalt-wash); color:var(--cobalt); display:grid; place-items:center; font-size:60px">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      </div>
+      <div style="flex:1; min-width:0">
+        <div style="height:100px; border-radius:50px; background:var(--sunk); display:flex; align-items:center; padding:0 36px; font-size:36px; color:var(--ink-2); white-space:nowrap; overflow:hidden">
+          <span id="s3url"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- S4: transcribed on the Mac -->
+  <section class="scene" id="s4">
+    <h1 class="abs display h" style="top:250px; font-size:108px">
+      <span class="line" id="s4a">Transcribed</span>
+      <span class="line" id="s4b">right on <span class="hl" id="s4hl">your Mac.</span></span>
+    </h1>
+    <div class="abs card pop" id="s4card" style="left:80px; right:80px; top:620px; padding:52px">
+      <div style="display:flex; align-items:center; justify-content:space-between">
+        <div style="display:flex; align-items:center; gap:22px; font-size:40px; font-weight:650">
+          <svg class="icon" viewBox="0 0 24 24" style="font-size:56px; color:var(--cobalt)"><path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/></svg>
+          On this Mac
+        </div>
+        <span class="pill mono" style="background:var(--cobalt-wash); color:var(--cobalt); font-size:26px; padding:12px 26px">no upload</span>
+      </div>
+      <div id="s4steps" style="margin-top:40px; display:grid; gap:22px"></div>
+      <div style="margin-top:40px; border-radius:32px; background:var(--sunk); padding:36px 40px; display:grid; gap:20px; font-size:34px; line-height:1.35; min-height:330px" id="s4tx"></div>
+    </div>
+    <div class="abs mono tag" id="s4note" style="left:80px; top:1560px">Illustrative example</div>
+  </section>
+
+  <!-- S5: ask -->
+  <section class="scene" id="s5">
+    <h1 class="abs display h" id="s5h1" style="top:250px">Then just ask.</h1>
+    <h1 class="abs display h" id="s5h2" style="top:250px; font-size:96px">
+      <span class="line">Answers from what</span>
+      <span class="line">was <span class="hl" id="s5hl">actually said.</span></span>
+    </h1>
+    <div class="abs card pop" id="s5card" style="left:60px; right:60px; top:560px; height:1000px; overflow:hidden">
+      <div style="height:110px; border-bottom:2px solid var(--line); display:flex; align-items:center; gap:20px; padding:0 44px; font-size:32px; font-weight:650">
+        <div class="bars" style="gap:5px; height:40px"><i style="height:18px; width:8px; background:var(--cobalt)"></i><i style="height:36px; width:8px; background:var(--cobalt)"></i><i style="height:24px; width:8px; background:var(--cobalt)"></i></div>
+        Weekly team sync
+        <span class="mono" style="margin-left:auto; font-size:24px; font-weight:400; color:var(--ink-3)">llama3.2:3b · local</span>
+      </div>
+      <div id="s5body" style="position:absolute; left:0; right:0; top:110px; bottom:150px; padding:40px 44px; overflow:hidden">
+        <div id="s5user" style="display:flex; justify-content:flex-end">
+          <div style="max-width:720px; background:var(--ink); color:#fff; font-size:36px; line-height:1.35; padding:26px 36px; border-radius:40px 40px 12px 40px">What did we decide about the launch date?</div>
+        </div>
+        <div id="s5bot" style="display:flex; gap:24px; margin-top:44px">
+          <div style="width:76px; height:76px; flex:none; border-radius:38px; background:var(--cobalt); display:grid; place-items:center">
+            <div class="bars" style="gap:4px"><i style="height:14px; width:7px; background:#fff"></i><i style="height:28px; width:7px; background:#fff"></i><i style="height:19px; width:7px; background:#fff"></i></div>
+          </div>
+          <div style="flex:1; padding-top:12px">
+            <div id="s5dots" class="bars" style="gap:12px; height:50px"></div>
+            <div id="s5ans" style="font-size:38px; line-height:1.45"></div>
+            <div id="s5chip" class="pill" style="margin-top:28px; background:var(--cobalt-wash); color:var(--cobalt); font-size:28px; font-weight:650; padding:14px 30px">2 passages used</div>
+            <div id="s5pass" style="display:grid; gap:18px; margin-top:22px"></div>
+          </div>
+        </div>
+      </div>
+      <div style="position:absolute; left:32px; right:32px; bottom:32px; height:100px; border-radius:50px; background:var(--sunk); display:flex; align-items:center; padding:0 14px 0 36px; font-size:34px; color:var(--ink-3)">
+        <span id="s5input" style="flex:1; white-space:nowrap; overflow:hidden"></span>
+        <div id="s5send" style="width:76px; height:76px; border-radius:38px; background:var(--cobalt); color:#fff; display:grid; place-items:center; font-size:36px">
+          <svg class="icon" viewBox="0 0 24 24" style="stroke-width:2.6"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
+        </div>
+      </div>
+    </div>
+    <div class="abs mono tag" id="s5note" style="left:80px; top:1590px">Illustrative example</div>
+  </section>
+
+  <!-- S6: privacy -->
+  <section class="scene" id="s6">
+    <h1 class="abs display h" style="top:250px; font-size:100px">
+      <span class="line" id="s6a">Your audio never</span>
+      <span class="line" id="s6b">goes to a cloud AI.</span>
+    </h1>
+    <div class="abs" id="s6mac" style="left:80px; top:600px; width:470px; height:420px">
+      <div class="card pop" style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px">
+        <svg class="icon" viewBox="0 0 24 24" style="font-size:150px; color:var(--cobalt); stroke-width:1.6"><path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/></svg>
+        <div style="font-size:42px; font-weight:700">Your Mac</div>
+        <div class="mono" style="font-size:22px; color:var(--ink-3); white-space:nowrap">transcribe · search · answer</div>
+      </div>
+    </div>
+    <div class="abs" id="s6cloud" style="left:640px; top:660px; width:360px; height:300px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:var(--ember)">
+      <svg class="icon" viewBox="0 0 24 24" style="font-size:190px; stroke-width:1.4; stroke-dasharray:3 2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+      <div style="font-size:36px; font-weight:650">Cloud AI</div>
+    </div>
+    <svg class="abs" id="s6link" style="left:550px; top:770px" width="120" height="60" viewBox="0 0 120 60">
+      <line id="s6line" x1="6" y1="30" x2="114" y2="30" stroke="#E2552E" stroke-width="6" stroke-linecap="round" stroke-dasharray="14 14"/>
+    </svg>
+    <div class="abs" id="s6x" style="left:572px; top:762px; width:76px; height:76px; border-radius:38px; background:var(--ember-wash); border:4px solid var(--ember); color:var(--ember); display:grid; place-items:center; font-size:44px">
+      <svg class="icon" viewBox="0 0 24 24" style="stroke-width:3"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+    </div>
+    <div class="abs" style="left:80px; right:80px; top:1110px; display:grid; gap:26px">
+      <div class="card" id="s6p1" style="height:140px; display:flex; align-items:center; gap:30px; padding:0 44px; font-size:46px; font-weight:650">
+        <span style="width:84px; height:84px; border-radius:26px; background:var(--cobalt-wash); color:var(--cobalt); display:grid; place-items:center; font-size:46px"><svg class="icon" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg></span>
+        No API keys
+      </div>
+      <div class="card" id="s6p2" style="height:140px; display:flex; align-items:center; gap:30px; padding:0 44px; font-size:46px; font-weight:650">
+        <span style="width:84px; height:84px; border-radius:26px; background:var(--cobalt-wash); color:var(--cobalt); display:grid; place-items:center; font-size:46px"><svg class="icon" viewBox="0 0 24 24"><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/></svg></span>
+        No fee per question
+      </div>
+      <div class="card" id="s6p3" style="height:140px; display:flex; align-items:center; gap:30px; padding:0 44px; font-size:46px; font-weight:650">
+        <span style="width:84px; height:84px; border-radius:26px; background:var(--cobalt-wash); color:var(--cobalt); display:grid; place-items:center; font-size:46px"><svg class="icon" viewBox="0 0 24 24"><path d="M12 20h.01"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M5 12.859a10 10 0 0 1 5.17-2.69"/><path d="M19 12.859a10 10 0 0 0-2.007-1.523"/><path d="M2 8.82a15 15 0 0 1 4.177-2.643"/><path d="M22 8.82a15 15 0 0 0-11.288-3.764"/><path d="m2 2 20 20"/></svg></span>
+        Works offline
+      </div>
+    </div>
+    <div class="abs mono tag" id="s6note" style="left:80px; right:80px; top:1620px; line-height:1.5">Sign-in and the encrypted backup of your chats use the internet.</div>
+  </section>
+
+  <!-- S7: call to action -->
+  <section class="scene" id="s7">
+    <h1 class="abs display h" style="top:300px; font-size:124px">
+      <span class="line" id="s7a">Stop re-listening.</span>
+      <span class="line" id="s7b">Start <span class="hl" id="s7hl">asking.</span></span>
+    </h1>
+    <div class="abs" id="s7brand" style="left:0; right:0; top:820px; display:flex; flex-direction:column; align-items:center; gap:40px">
+      <svg viewBox="0 0 64 64" width="220" height="220">
+        <rect width="64" height="64" rx="15" fill="#2F5BFF"/>
+        <rect x="11" y="23" width="7" height="18" rx="3.5" fill="#fff"/>
+        <rect x="21.5" y="14" width="7" height="36" rx="3.5" fill="#fff"/>
+        <rect x="32" y="20" width="7" height="24" rx="3.5" fill="#fff"/>
+        <circle cx="47.5" cy="45" r="5" fill="#D4FF3F"/>
+      </svg>
+      <div class="display" style="font-size:150px">Tell Me<span style="color:var(--cobalt)">.</span></div>
+    </div>
+    <div class="abs" id="s7cta" style="left:0; right:0; top:1340px; display:flex; flex-direction:column; align-items:center; gap:28px">
+      <div class="pill" style="background:var(--cobalt); color:#fff; font-size:46px; font-weight:700; padding:34px 64px; box-shadow:var(--pop)">
+        <svg class="icon" viewBox="0 0 24 24" style="stroke-width:2.4"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+        Download for Mac
+      </div>
+      <div class="mono" style="font-size:28px; color:var(--ink-3)">macOS · Apple Silicon</div>
+    </div>
+  </section>
+</div>
+
+<script>
+// Timeline (seconds). Scenes sit on whole bars of the 108 BPM track (1 bar = 2.222 s).
+const BAR = 4 * 60 / 108;
+const S = { s1: [0, 2], s2: [2, 4], s3: [4, 6], s4: [6, 8], s5: [8, 12], s6: [12, 16], s7: [16, 19] };
+for (const k in S) S[k] = S[k].map((b) => b * BAR);
+window.TIMELINE = S;
+window.DURATION = S.s7[1];
+
+const $ = (id) => document.getElementById(id);
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, a, d) => clamp((t - a) / d);
+const outCubic = (x) => 1 - Math.pow(1 - x, 3);
+const inOutCubic = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+const outBack = (x, s = 1.6) => 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2);
+const lerp = (a, b, x) => a + (b - a) * x;
+
+// Rise in: opacity + translateY (+ optional scale)
+function rise(el, t, at, { d = 0.55, dy = 70, s0 = 1, back = false } = {}) {
+  const p = prog(t, at, d);
+  const e = back ? outBack(p) : outCubic(p);
+  el.style.opacity = clamp(p * 1.8);
+  el.style.transform = `translateY(${lerp(dy, 0, e)}px) scale(${lerp(s0, 1, e)})`;
+}
+function sweep(el, t, at, d = 0.45) { el.style.backgroundSize = `${outCubic(prog(t, at, d)) * 100}% ${el.classList.contains('full') ? 100 : 46}%`; }
+function type(el, text, t, at, cps, caret = true) {
+  const n = Math.floor(clamp((t - at) * cps, 0, text.length));
+  const showCaret = caret && t >= at - 0.4 && (n < text.length ? true : Math.floor(t * 2.2) % 2 === 0);
+  el.innerHTML = escape(text.slice(0, n)) + (showCaret ? '<span class="caret"></span>' : '');
+  return n;
+}
+const escape = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const noise = (i, t) => 0.5 + 0.5 * Math.sin(i * 12.9898 + t * 7.1) * Math.sin(i * 4.1 + t * 3.3 + 1.7);
+
+// Build bar sets once
+function bars(el, n, h) { for (let i = 0; i < n; i++) { const b = document.createElement('i'); el.appendChild(b); } return [...el.children]; }
+const s1wave = bars($('s1wave'), 56);
+const s1h = s1wave.map((_, i) => 26 + 110 * Math.abs(Math.sin(i * 0.61) * Math.cos(i * 0.23 + 1) + 0.25 * Math.sin(i * 2.3)));
+const s3meter = bars($('s3meter'), 26);
+const dots = bars($('s5dots'), 3);
+dots.forEach((d) => { d.style.width = '16px'; d.style.height = '16px'; d.style.borderRadius = '8px'; d.style.background = 'var(--cobalt)'; });
+
+const STEPS = ['Transcribing', 'Indexing passages', 'Ready to ask'];
+$('s4steps').innerHTML = STEPS.map((s, i) => `
+  <div style="display:flex; align-items:center; gap:24px; font-size:36px" id="s4st${i}">
+    <span id="s4ck${i}" style="width:56px; height:56px; border-radius:28px; display:grid; place-items:center; font-size:32px; color:#fff"></span>
+    <span style="flex:1">${s}</span>
+    <span class="mono" id="s4pc${i}" style="font-size:28px; color:var(--ink-3)"></span>
+  </div>`).join('');
+const TX = [
+  ['00:12:38', 'Okay, the beta numbers look good.'],
+  ['00:12:41', "So let's move the launch to March 14,"],
+  ['00:12:44', 'once the beta feedback is in.'],
+];
+$('s4tx').innerHTML = TX.map((l, i) => `<div id="s4l${i}" style="display:flex; gap:22px"><span class="mono" style="color:var(--cobalt); font-size:28px; padding-top:4px">${l[0]}</span><span id="s4lt${i}"></span></div>`).join('');
+
+const PASSAGES = [
+  ['#1', '00:12:41', "…so let's move the launch to <span class=\"hl full\" style=\"background-size:100% 100%\">March 14</span>, once the beta feedback is in."],
+  ['#2', '00:31:05', 'Marketing needs two weeks once the date is final.'],
+];
+$('s5pass').innerHTML = PASSAGES.map((p, i) => `
+  <div id="s5p${i}" style="border:2px solid var(--line); border-radius:28px; padding:24px 28px; font-size:30px; line-height:1.4; color:var(--ink-2)">
+    <div class="mono" style="font-size:24px; color:var(--cobalt); margin-bottom:8px">${p[0]} · ${p[1]}</div>${p[2]}
+  </div>`).join('');
+
+const CHECK = '<svg class="icon" viewBox="0 0 24 24" style="stroke-width:3"><path d="M20 6 9 17l-5-5"/></svg>';
+const ANSWER_A = 'You agreed to move the launch to ';
+const ANSWER_B = 'March 14';
+const ANSWER_C = ', once the beta feedback is in.';
+const fmt = (sec) => { sec = Math.floor(sec); const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60; return [h, m, s].map((v) => String(v).padStart(2, '0')).join(':'); };
+
+function sceneFrame(id, t, { exit = 0.28, enterFade = 0, lead = 0.14 } = {}) {
+  const [a, b] = S[id];
+  const el = $(id);
+  if (t < a - 0.6 || t > b + 0.05) { el.style.display = 'none'; return null; }
+  el.style.display = 'block';
+  const lt = t - a + lead;
+  const xo = exit ? prog(t, b - exit - 0.08, exit) : 0; // gone just before the next scene's headline rises
+  const ef = enterFade ? prog(t, a, enterFade) : 1;
+  el.style.opacity = (1 - xo) * ef;
+  el.style.transform = `translateY(${-60 * inOutCubic(xo)}px)`;
+  return lt;
+}
+
+window.render = function render(t) {
+  // S1 hook
+  let lt = sceneFrame('s1', t, { exit: 0 });
+  if (lt !== null) {
+    rise($('s1a'), lt, 0.05); rise($('s1b'), lt, 0.25);
+    rise($('s1card'), lt, 0.45, { dy: 120, s0: 0.94 });
+    const played = 872 + lt * 60; // 14:32 onward, ticking
+    $('s1time').textContent = fmt(played);
+    $('s1left').textContent = fmt(7200 - played).replace(/^0/, '').replace(/^(\d):(\d\d):(\d\d)$/, '$1:$2:$3') + ' left';
+    const frac = played / 7200 + lt * 0.004;
+    s1wave.forEach((b, i) => {
+      const grow = outCubic(prog(lt, 0.55 + i * 0.012, 0.4));
+      b.style.height = `${Math.max(10, s1h[i] * grow)}px`;
+      b.style.background = i / s1wave.length < frac ? 'var(--ink)' : 'var(--line)';
+    });
+    rise($('s1c'), lt, 1.95);
+    sweep($('s1hl'), lt, 2.55);
+    $('s1card').style.filter = '';
+  }
+
+  // S2 brand on cobalt (circle wipe in; S3 slides over it)
+  lt = sceneFrame('s2', t, { exit: 0 });
+  if (lt !== null) {
+    const w = inOutCubic(prog(lt, -0.42, 0.5));
+    $('s2wipe').style.transform = `scale(${w})`;
+    const lp = prog(lt, 0.0, 0.6);
+    $('s2logo').style.opacity = clamp(lp * 3);
+    $('s2logo').style.transform = `scale(${lerp(0.4, 1, outBack(lp, 1.8))}) rotate(${lerp(-12, 0, outCubic(lp))}deg)`;
+    [['lb1', 41, 18], ['lb2', 50, 36], ['lb3', 44, 24]].forEach(([id, bottom, h], i) => {
+      const g = outBack(prog(lt, 0.15 + i * 0.08, 0.45), 2.2);
+      const hh = Math.max(7, h * g);
+      const el = $(id); el.setAttribute('height', hh); el.setAttribute('y', bottom - hh);
+    });
+    $('lb4').setAttribute('r', 5 * outBack(prog(lt, 0.45, 0.35), 2.5));
+    rise($('s2word'), lt, 0.35, { dy: 90 });
+    const dp = prog(lt, 0.75, 0.35);
+    $('s2dot').style.transform = `translateY(${lerp(-120, 0, outBack(dp, 2))}px)`;
+    $('s2dot').style.opacity = clamp(dp * 4);
+    rise($('s2tag'), lt, 1.0);
+    $('s2hl').style.color = prog(lt, 1.55, 0.2) > 0.5 ? 'var(--ink)' : '#fff';
+    sweep($('s2hl'), lt, 1.5, 0.35);
+    const zoom = 1 + 0.03 * prog(lt, 0.5, 4);
+    $('s2logo').parentElement.style.transform += ` scale(${zoom})`;
+  }
+
+  // S3 three ways in: panel slides up over the cobalt
+  lt = sceneFrame('s3', t, { lead: 0 });
+  if (lt !== null) {
+    const pp = inOutCubic(prog(lt, -0.5, 0.55));
+    const el = $('s3');
+    if (pp < 1) el.style.transform = `translateY(${(1 - pp) * 1920}px)`;
+    el.style.borderRadius = `${72 * (1 - pp)}px ${72 * (1 - pp)}px 0 0`;
+    rise($('s3w1'), lt, 0.1, { dy: 50 }); $('s3w1').style.display = 'inline-block';
+    rise($('s3w2'), lt, 1.0, { dy: 50 }); $('s3w2').style.display = 'inline-block';
+    rise($('s3w3'), lt, 1.85, { dy: 50 });
+    rise($('s3c1'), lt, 0.15, { dy: 140, back: true });
+    rise($('s3c2'), lt, 1.05, { dy: 140, back: true });
+    rise($('s3c3'), lt, 1.9, { dy: 140, back: true });
+    s3meter.forEach((b, i) => {
+      const live = lt > 0.3 ? noise(i, lt) : 0.1;
+      b.style.height = `${10 + 66 * live * (0.5 + 0.5 * Math.sin(i * 0.4 + 1))}px`;
+      b.style.background = 'var(--cobalt)';
+      b.style.opacity = 0.35 + 0.65 * live;
+    });
+    $('s3timer').textContent = '00:' + String(Math.floor(Math.max(0, lt - 0.3) * 1.6 + 12)).padStart(2, '0');
+    $('s3prog').style.width = `${inOutCubic(prog(lt, 1.35, 1.8)) * 100}%`;
+    type($('s3url'), 'youtube.com/watch?v=lecture-6', lt, 2.3, 18);
+  }
+
+  // S4 transcribe locally
+  lt = sceneFrame('s4', t);
+  if (lt !== null) {
+    rise($('s4a'), lt, 0.05); rise($('s4b'), lt, 0.2);
+    sweep($('s4hl'), lt, 0.9);
+    rise($('s4card'), lt, 0.25, { dy: 140, s0: 0.95 });
+    rise($('s4note'), lt, 1.2, { dy: 20 });
+    const stepAt = [[0.4, 1.3], [1.7, 0.7], [2.45, 0.25]];
+    stepAt.forEach(([a, d], i) => {
+      const p = prog(lt, a, d);
+      const done = p >= 1;
+      const ck = $('s4ck' + i);
+      ck.innerHTML = done ? CHECK : '';
+      ck.style.background = done ? 'var(--success)' : 'var(--sunk)';
+      ck.style.transform = `scale(${done ? outBack(prog(lt, a + d, 0.3), 2.5) : 1})`;
+      $('s4pc' + i).textContent = lt < a ? '' : done ? 'done' : `${Math.floor(p * 100)}%`;
+      $('s4st' + i).style.opacity = lt < a - 0.1 ? 0.45 : 1;
+    });
+    TX.forEach((l, i) => {
+      const at = 0.6 + i * 0.55;
+      rise($('s4l' + i), lt, at, { dy: 24, d: 0.35 });
+      type($('s4lt' + i), l[1], lt, at, 42, false);
+    });
+  }
+
+  // S5 ask
+  lt = sceneFrame('s5', t);
+  if (lt !== null) {
+    const h1o = 1 - prog(lt, 1.35, 0.3);
+    rise($('s5h1'), lt, 0.05);
+    $('s5h1').style.opacity = Math.min(+$('s5h1').style.opacity, h1o);
+    rise($('s5h2'), lt, 1.6);
+    sweep($('s5hl'), lt, 2.9);
+    rise($('s5card'), lt, 0.15, { dy: 160, s0: 0.95 });
+    const Q = 'What did we decide about the launch date?';
+    const sent = lt >= 2.05;
+    if (!sent) type($('s5input'), Q, lt, 0.55, 30); else { $('s5input').textContent = 'Ask about this recording…'; }
+    $('s5send').style.transform = `scale(${lt > 1.9 && lt < 2.1 ? 0.86 : 1})`;
+    const u = $('s5user');
+    u.style.opacity = sent ? clamp(prog(lt, 2.05, 0.2) * 2) : 0;
+    u.style.transform = `translateY(${sent ? lerp(40, 0, outCubic(prog(lt, 2.05, 0.35))) : 40}px)`;
+    const bot = $('s5bot');
+    bot.style.opacity = clamp(prog(lt, 2.35, 0.25) * 2);
+    const thinking = lt >= 2.35 && lt < 3.2;
+    $('s5dots').style.display = thinking ? 'flex' : 'none';
+    dots.forEach((d, i) => { d.style.transform = `translateY(${-10 * Math.max(0, Math.sin((lt - i * 0.15) * 9))}px)`; });
+    const full = ANSWER_A + ANSWER_B + ANSWER_C;
+    const n = lt < 3.2 ? 0 : Math.floor(clamp((lt - 3.2) * 34, 0, full.length));
+    const shown = full.slice(0, n);
+    const a = shown.slice(0, ANSWER_A.length), b = shown.slice(ANSWER_A.length, ANSWER_A.length + ANSWER_B.length), c = shown.slice(ANSWER_A.length + ANSWER_B.length);
+    const hlp = outCubic(prog(lt, 5.0, 0.4)) * 100;
+    $('s5ans').innerHTML = escape(a) + (b ? `<span class="hl full" style="background-size:${hlp}% 100%">${escape(b)}</span>` : '') + escape(c);
+    rise($('s5chip'), lt, 5.05, { dy: 20, d: 0.35 });
+    const chipVis = lt >= 5.05;
+    $('s5chip').style.display = chipVis ? 'inline-flex' : 'none';
+    rise($('s5p0'), lt, 5.6, { dy: 30, d: 0.4 }); rise($('s5p1'), lt, 5.85, { dy: 30, d: 0.4 });
+    const hl = $('s5p0').querySelector('.hl'); hl.style.backgroundSize = `${outCubic(prog(lt, 6.2, 0.4)) * 100}% 100%`;
+    // keep the newest content in view: scroll the body up once passages appear
+    const scroll = inOutCubic(prog(lt, 5.5, 0.7)) * 150;
+    $('s5user').parentElement.firstElementChild.style.marginTop = `${-scroll}px`;
+    rise($('s5note'), lt, 5.2, { dy: 20 });
+  }
+
+  // S6 privacy
+  lt = sceneFrame('s6', t);
+  if (lt !== null) {
+    rise($('s6a'), lt, 0.05); rise($('s6b'), lt, 0.2);
+    rise($('s6mac'), lt, 0.35, { dy: 120, back: true });
+    rise($('s6cloud'), lt, 0.6, { dy: 120 });
+    const lp = prog(lt, 1.0, 0.6);
+    $('s6line').setAttribute('x2', lerp(6, 114, outCubic(lp)));
+    $('s6link').style.opacity = lp > 0 ? 1 : 0;
+    const xp = prog(lt, 1.7, 0.4);
+    $('s6x').style.opacity = clamp(xp * 3);
+    $('s6x').style.transform = `scale(${lerp(2.2, 1, outBack(xp, 2))}) rotate(${lerp(-30, 0, outCubic(xp))}deg)`;
+    $('s6cloud').style.opacity = Math.min(+$('s6cloud').style.opacity, 1 - 0.55 * prog(lt, 1.9, 0.4));
+    rise($('s6p1'), lt, 2.6, { dy: 80, back: true });
+    rise($('s6p2'), lt, 3.55, { dy: 80, back: true });
+    rise($('s6p3'), lt, 5.15, { dy: 80, back: true });
+    rise($('s6note'), lt, 6.2, { dy: 20 });
+  }
+
+  // S7 call to action
+  lt = sceneFrame('s7', t, { exit: 0 });
+  if (lt !== null) {
+    rise($('s7a'), lt, 0.1);
+    rise($('s7b'), lt, 1.4);
+    sweep($('s7hl'), lt, 1.8);
+    rise($('s7brand'), lt, 2.55, { dy: 100, s0: 0.85, back: true });
+    rise($('s7cta'), lt, 3.2, { dy: 60, back: true });
+  }
+};
+
+// Preview in a normal browser: ?t=12 freezes a frame, otherwise it plays in real time.
+const q = new URLSearchParams(location.search);
+window.ready = document.fonts.ready.then(() => { render(0); return true; });
+if (!q.has('render')) {
+  window.ready.then(() => {
+    if (q.has('t')) { render(+q.get('t')); return; }
+    const t0 = performance.now();
+    const loop = () => { render(((performance.now() - t0) / 1000) % DURATION); requestAnimationFrame(loop); };
+    loop();
+  });
+}
+</script>
+</body>
+</html>

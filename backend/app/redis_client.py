@@ -1,50 +1,65 @@
 import redis
-import json
 import logging
+import numpy as np
 from typing import List, Dict, Any
 from app.config import settings
 
 logger = logging.getLogger("uvicorn.error")
 
+# Fields the vector index must have. If an older index is missing any of them it is rebuilt.
+REQUIRED_INDEX_FIELDS = {"session_id", "user_id"}
+
+
 class RedisClient:
     def __init__(self):
         self.client: redis.Redis | None = None
+        # Second connection without response decoding, for reading binary embedding fields.
+        self.raw_client: redis.Redis | None = None
         self.vector_idx_name = "vector_idx"
 
     def connect(self):
-        """Initialize the Redis connection."""
-        try:
-            logger.info(f"Connecting to Redis at {settings.redis_host}:{settings.redis_port}")
-            self.client = redis.Redis(
-                host=settings.redis_host,
-                port=settings.redis_port,
-                db=settings.redis_db,
-                password=settings.redis_password,
-                decode_responses=True,
-                socket_timeout=5.0
-            )
-            # Verify connectivity
-            self.client.ping()
+        """Create the Redis clients.
+
+        redis-py connects lazily and reconnects on the next command, so the clients are kept
+        even if Redis is not up yet. /health reports when it becomes reachable.
+        """
+        common = dict(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            db=settings.redis_db,
+            password=settings.redis_password,
+            socket_timeout=5.0,
+            socket_connect_timeout=2.0,
+            health_check_interval=30,
+        )
+        logger.info(f"Connecting to Redis at {settings.redis_host}:{settings.redis_port}")
+        self.client = redis.Redis(decode_responses=True, **common)
+        self.raw_client = redis.Redis(decode_responses=False, **common)
+        if self.ping():
             logger.info("Successfully connected to Redis.")
-        except redis.ConnectionError as e:
-            logger.error(f"Failed to connect to Redis: {e}")
-            self.client = None
+        else:
+            logger.warning("Redis is not reachable yet; will retry automatically on the next request.")
 
     def disconnect(self):
-        """Close the Redis connection."""
-        if self.client:
-            self.client.close()
-            logger.info("Redis connection closed.")
-            self.client = None
+        """Close the Redis connections."""
+        for c in (self.client, self.raw_client):
+            if c:
+                c.close()
+        self.client = None
+        self.raw_client = None
+        logger.info("Redis connection closed.")
 
     def ping(self) -> bool:
         """Verify the connection is alive."""
         if not self.client:
             return False
         try:
-            return self.client.ping()
-        except redis.ConnectionError:
+            return bool(self.client.ping())
+        except redis.RedisError:
             return False
+
+    def _scan(self, pattern: str) -> List[str]:
+        return list(self.client.scan_iter(match=pattern, count=500))
 
     def create_vector_index(self, dim: int = 384):
         """Create a vector index in Redis for HNSW vector search if it does not exist."""
@@ -55,18 +70,16 @@ class RedisClient:
         try:
             # Check if index already exists and verify its schema is up to date
             info = self.client.ft(self.vector_idx_name).info()
-            attributes = info.get("attributes", [])
-            has_session_id = False
-            for attr in attributes:
-                # attr format in redis search info: ['identifier', 'session_id', 'attribute', ...]
-                if len(attr) > 1 and (attr[0] == "session_id" or attr[1] == "session_id"):
-                    has_session_id = True
-                    break
-            if not has_session_id:
+            present = set()
+            for attr in info.get("attributes", []):
+                # attr format in redis search info: ['identifier', 'session_id', 'attribute', 'session_id', ...]
+                if len(attr) > 1:
+                    present.add(attr[1])
+            if not REQUIRED_INDEX_FIELDS.issubset(present):
                 logger.info(f"Index '{self.vector_idx_name}' is using an outdated schema. Dropping and recreating index...")
                 self.client.ft(self.vector_idx_name).dropindex(delete_documents=False)
                 raise Exception("Outdated schema structure detected.")
-                
+
             logger.info(f"Vector index '{self.vector_idx_name}' already exists with correct schema.")
         except Exception:
             # Index does not exist or was dropped due to schema mismatch, create it
@@ -122,6 +135,22 @@ class RedisClient:
         self.client.sadd(f"user_sessions:{user_id}", session_id)
         logger.info(f"Cached session {session_id} in Redis (synced={synced}).")
 
+    def get_session(self, session_id: str) -> Dict[str, Any] | None:
+        if not self.client:
+            return None
+        data = self.client.hgetall(f"session:{session_id}")
+        return data or None
+
+    def get_session_owner(self, session_id: str) -> str | None:
+        if not self.client:
+            return None
+        return self.client.hget(f"session:{session_id}", "user_id")
+
+    def update_session_title(self, session_id: str, title: str):
+        if not self.client:
+            return
+        self.client.hset(f"session:{session_id}", mapping={"session_title": title, "synced": "False"})
+
     def get_user_sessions(self, user_id: str) -> List[Dict[str, Any]]:
         if not self.client:
             return []
@@ -146,7 +175,7 @@ class RedisClient:
             user_id = s_data.get("user_id")
             if user_id:
                 self.client.srem(f"user_sessions:{user_id}", session_id)
-        
+
         # Delete session hash
         self.client.delete(f"session:{session_id}")
 
@@ -157,7 +186,7 @@ class RedisClient:
         self.client.delete(f"session_messages:{session_id}")
 
         # Delete all document chunks associated with the session
-        chunk_keys = self.client.keys(f"chunk:{session_id}:*")
+        chunk_keys = self.session_chunk_keys(session_id)
         if chunk_keys:
             self.client.delete(*chunk_keys)
 
@@ -196,14 +225,18 @@ class RedisClient:
 
     # --- VECTOR CHUNKS CACHE METHODS ---
 
+    def session_chunk_keys(self, session_id: str) -> List[str]:
+        if not self.client:
+            return []
+        return self._scan(f"chunk:{session_id}:*")
+
     def save_chunk(self, session_id: str, idx: int, content: str, embedding: List[float], user_id: str, synced: bool = False):
         if not self.client:
             return
-        # We save chunks prefix as chunk:{session_id}:{idx} so our HNSW index can automatically match them
+        # Key prefix chunk:{session_id}:{idx} is what the HNSW index matches on.
         key = f"chunk:{session_id}:{idx}"
-        import numpy as np
         emb_bytes = np.array(embedding, dtype=np.float32).tobytes()
-        
+
         mapping = {
             "session_id": session_id,
             "chunk_index": idx,
@@ -220,9 +253,8 @@ class RedisClient:
     def get_unsynced_sessions(self) -> List[Dict[str, Any]]:
         if not self.client:
             return []
-        keys = self.client.keys("session:*")
         unsynced = []
-        for k in keys:
+        for k in self._scan("session:*"):
             data = self.client.hgetall(k)
             if data and data.get("synced") == "False":
                 unsynced.append(data)
@@ -231,64 +263,42 @@ class RedisClient:
     def get_unsynced_messages(self) -> List[Dict[str, Any]]:
         if not self.client:
             return []
-        keys = self.client.keys("message:*")
         unsynced = []
-        for k in keys:
+        for k in self._scan("message:*"):
             data = self.client.hgetall(k)
             if data and data.get("synced") == "False":
                 unsynced.append(data)
         return unsynced
 
     def get_unsynced_chunks(self) -> List[Dict[str, Any]]:
+        if not self.client or not self.raw_client:
+            return []
+        unsynced = []
+        for k in self._scan("chunk:*"):
+            raw_data = self.raw_client.hgetall(k)
+            if raw_data and raw_data.get(b"synced") == b"False":
+                raw_emb = raw_data.get(b"embedding")
+                unsynced.append({
+                    "session_id": raw_data[b"session_id"].decode("utf-8"),
+                    "chunk_index": int(raw_data[b"chunk_index"].decode("utf-8")),
+                    "content": raw_data[b"content"].decode("utf-8"),
+                    # Convert raw bytes back to list of floats
+                    "embedding": np.frombuffer(raw_emb, dtype=np.float32).tolist() if raw_emb else [],
+                    "user_id": raw_data[b"user_id"].decode("utf-8"),
+                    "synced": False,
+                    "redis_key": k
+                })
+        return unsynced
+
+    def get_deletion_tombstones(self, user_id: str) -> List[str]:
+        """Session ids this user deleted while their cloud deletion is still pending."""
         if not self.client:
             return []
-        keys = self.client.keys("chunk:*")
-        if not keys:
-            return []
-            
-        unsynced = []
-        import numpy as np
-        
-        # Open a single raw client connection with decode_responses=False to safely read binary fields
-        raw_client = redis.Redis(
-            host=settings.redis_host,
-            port=settings.redis_port,
-            db=settings.redis_db,
-            password=settings.redis_password,
-            decode_responses=False
-        )
-        
-        try:
-            for k in keys:
-                raw_data = raw_client.hgetall(k)
-                if raw_data and raw_data.get(b"synced") == b"False":
-                    # Decode strings manually
-                    session_id = raw_data[b"session_id"].decode("utf-8")
-                    chunk_index = int(raw_data[b"chunk_index"].decode("utf-8"))
-                    content = raw_data[b"content"].decode("utf-8")
-                    user_id = raw_data[b"user_id"].decode("utf-8")
-                    synced = raw_data[b"synced"].decode("utf-8")
-                    
-                    # Convert raw bytes back to list of floats
-                    raw_emb = raw_data.get(b"embedding")
-                    if raw_emb:
-                        emb_list = np.frombuffer(raw_emb, dtype=np.float32).tolist()
-                    else:
-                        emb_list = []
-                        
-                    unsynced.append({
-                        "session_id": session_id,
-                        "chunk_index": chunk_index,
-                        "content": content,
-                        "embedding": emb_list,
-                        "user_id": user_id,
-                        "synced": synced == "True",
-                        "redis_key": k
-                    })
-        finally:
-            raw_client.close()
-            
-        return unsynced
+        return [
+            k.split(":", 1)[1]
+            for k in self._scan("deleted_session:*")
+            if self.client.get(k) == user_id
+        ]
 
     def mark_session_synced(self, session_id: str):
         if self.client:
@@ -301,5 +311,6 @@ class RedisClient:
     def mark_chunk_synced(self, redis_key: str):
         if self.client:
             self.client.hset(redis_key, "synced", "True")
+
 
 redis_client = RedisClient()

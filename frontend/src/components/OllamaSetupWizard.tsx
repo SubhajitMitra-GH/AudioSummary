@@ -1,7 +1,22 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Cpu, Download, Loader2, RefreshCw, CheckCircle, AlertTriangle, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Download, Loader2, RefreshCw, AlertTriangle, ArrowRight, Check } from 'lucide-react';
+import { SpeechBars, Wordmark } from './ui/Brand';
+import { API_BASE, apiFetch, readErrorDetail, ModelOption } from '../utils/api';
+
+type InstallState = 'idle' | 'downloading' | 'extracting' | 'starting' | 'error';
+
+// One line of Ollama's NDJSON pull stream (or an error line from our backend).
+interface PullLine {
+  status?: string;
+  message?: string;
+  error?: string;
+  completed?: number;
+  total?: number;
+}
+
+const errorText = (err: unknown, fallback: string) => (err instanceof Error ? err.message : fallback);
 
 interface OllamaStatus {
   ollama_running: boolean;
@@ -11,11 +26,13 @@ interface OllamaStatus {
 
 interface OllamaSetupWizardProps {
   status: OllamaStatus;
+  models: ModelOption[];
+  onSelectModel: (modelId: string) => Promise<void>;
   onComplete: () => void;
 }
 
-export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWizardProps) {
-  const [installState, setInstallState] = useState<'idle' | 'downloading' | 'extracting' | 'starting' | 'error'>('idle');
+export default function OllamaSetupWizard({ status, models, onSelectModel, onComplete }: OllamaSetupWizardProps) {
+  const [installState, setInstallState] = useState<InstallState>('idle');
   const [installProgress, setInstallProgress] = useState(0);
   const [installError, setInstallError] = useState<string | null>(null);
 
@@ -23,32 +40,41 @@ export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWiz
   const [pullProgress, setPullProgress] = useState(0);
   const [pullStatus, setPullStatus] = useState<string>('');
   const [pullDetails, setPullDetails] = useState<string>('');
+  const [pullError, setPullError] = useState<string | null>(null);
 
   const [verifying, setVerifying] = useState(false);
 
-  // Poll local installation status if we triggered auto-install
+  const handleVerify = useCallback(() => {
+    setVerifying(true);
+    // Give backend a second to verify status
+    setTimeout(() => {
+      onComplete();
+      setVerifying(false);
+    }, 1500);
+  }, [onComplete]);
+
+  // Poll local installation status while an auto-install is running
   useEffect(() => {
     if (installState === 'idle' || installState === 'error') return;
 
-    let intervalId = setInterval(async () => {
+    const intervalId = setInterval(async () => {
       try {
-        const res = await fetch('http://localhost:8000/ollama/install/status');
-        if (res.ok) {
-          const data = await res.json();
-          // Map backend states
-          if (data.status.startsWith('error')) {
-            setInstallState('error');
-            setInstallError(data.status.replace('error: ', ''));
-            clearInterval(intervalId);
-          } else if (data.status === 'completed') {
-            setInstallState('idle');
-            setInstallProgress(100);
-            clearInterval(intervalId);
-            handleVerify();
-          } else {
-            setInstallState(data.status);
-            setInstallProgress(data.progress);
-          }
+        const res = await fetch(`${API_BASE}/ollama/install/status`);
+        if (!res.ok) return;
+        const data: { status: string; progress: number } = await res.json();
+        if (data.status.startsWith('error')) {
+          clearInterval(intervalId);
+          setInstallState('error');
+          setInstallError(data.status.replace(/^error:\s*/, ''));
+        } else if (data.status === 'completed' || data.status === 'launched') {
+          // 'launched' = installed and opened but not answering yet; re-checking status decides.
+          clearInterval(intervalId);
+          setInstallState('idle');
+          setInstallProgress(100);
+          handleVerify();
+        } else if (data.status !== 'idle') {
+          setInstallState(data.status as InstallState);
+          setInstallProgress(data.progress);
         }
       } catch (err) {
         console.error('Error checking install status:', err);
@@ -56,236 +82,249 @@ export default function OllamaSetupWizard({ status, onComplete }: OllamaSetupWiz
     }, 1000);
 
     return () => clearInterval(intervalId);
-  }, [installState]);
+  }, [installState, handleVerify]);
 
   const handleAutoInstall = async () => {
     setInstallState('downloading');
     setInstallProgress(0);
     setInstallError(null);
     try {
-      const res = await fetch('http://localhost:8000/ollama/install', { method: 'POST' });
-      if (!res.ok) throw new Error('Failed to trigger installation.');
-    } catch (err: any) {
+      const res = await apiFetch('/ollama/install', { method: 'POST' });
+      if (!res.ok) throw new Error(await readErrorDetail(res));
+    } catch (err) {
       setInstallState('error');
-      setInstallError(err.message || 'Failed to trigger installation.');
+      setInstallError(errorText(err, 'Failed to trigger installation.'));
     }
-  };
-
-  const handleVerify = async () => {
-    setVerifying(true);
-    // Give backend a second to verify status
-    setTimeout(() => {
-      onComplete();
-      setVerifying(false);
-    }, 1500);
   };
 
   const handlePullModel = async () => {
     setPulling(true);
     setPullProgress(0);
+    setPullError(null);
     setPullStatus('Connecting to Ollama pull registry...');
     setPullDetails('');
-    
+
     try {
-      const res = await fetch('http://localhost:8000/ollama/pull', { method: 'POST' });
+      const res = await apiFetch('/ollama/pull', { method: 'POST' });
+      if (!res.ok) throw new Error(await readErrorDetail(res));
       if (!res.body) throw new Error('ReadableStream not supported.');
-      
+
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      
       let buffer = '';
-      
+
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        
+
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         // Keep the last partial line in buffer
         buffer = lines.pop() || '';
-        
+
         for (const line of lines) {
           if (!line.trim()) continue;
+          let data: PullLine;
           try {
-            const data = JSON.parse(line);
-            
-            if (data.status === 'error') {
-              throw new Error(data.message || 'Failed to download model.');
-            }
-            
-            setPullStatus(data.status);
-            
-            if (data.completed && data.total) {
-              const pct = (data.completed / data.total) * 100;
-              setPullProgress(Math.round(pct * 10) / 10);
-              
-              const completedGB = (data.completed / (1024 * 1024 * 1024)).toFixed(2);
-              const totalGB = (data.total / (1024 * 1024 * 1024)).toFixed(2);
-              setPullDetails(`${completedGB} GB / ${totalGB} GB`);
-            } else {
-              setPullDetails('');
-            }
-            
-            if (data.status === 'success') {
-              setPullProgress(100);
-              setPulling(false);
-              handleVerify();
-              return;
-            }
-          } catch (err) {
-            // Ignore parse errors of partial lines
+            data = JSON.parse(line);
+          } catch {
+            continue; // not a complete JSON line
+          }
+
+          // Errors are thrown outside the parse try/catch so they are never swallowed.
+          if (data.status === 'error' || data.error) {
+            throw new Error(data.message || data.error || 'Failed to download model.');
+          }
+
+          if (data.status) setPullStatus(data.status);
+
+          if (data.completed && data.total) {
+            setPullProgress(Math.round((data.completed / data.total) * 1000) / 10);
+            const completedGB = (data.completed / (1024 * 1024 * 1024)).toFixed(2);
+            const totalGB = (data.total / (1024 * 1024 * 1024)).toFixed(2);
+            setPullDetails(`${completedGB} GB / ${totalGB} GB`);
+          } else {
+            setPullDetails('');
+          }
+
+          if (data.status === 'success') {
+            setPullProgress(100);
+            setPulling(false);
+            handleVerify();
+            return;
           }
         }
       }
-    } catch (err: any) {
+      throw new Error('The download stopped before it finished. Please try again.');
+    } catch (err) {
       console.error('Pull failed:', err);
-      alert(`Model download failed: ${err.message}`);
+      setPullError(errorText(err, 'Model download failed.'));
       setPulling(false);
     }
   };
+
+  /** Make a model the active one; if it isn't downloaded yet, download it. */
+  const chooseModel = async (model: ModelOption) => {
+    setPullError(null);
+    try {
+      await onSelectModel(model.id);
+    } catch (err) {
+      setPullError(errorText(err, 'Could not select this model.'));
+      return;
+    }
+    if (!model.installed) await handlePullModel();
+  };
+
+  const errorBox = (title: string, text: string) => (
+    <div role="alert" className="flex items-start gap-3 rounded-2xl bg-danger-wash px-4 py-3 rise-in">
+      <AlertTriangle className="w-4 h-4 shrink-0 text-danger mt-0.5" />
+      <div>
+        <p className="font-semibold text-[0.92rem] text-ink">{title}</p>
+        <p className="text-[0.88rem] leading-relaxed text-ink-2 mt-0.5">{text}</p>
+      </div>
+    </div>
+  );
+
+  const progressCard = (percent: number, title: string, detail: string) => (
+    <div className="rounded-[20px] bg-surface border border-line p-5 flex flex-col gap-4 shadow-[var(--shadow-float)]" aria-live="polite">
+      <SpeechBars count={40} seed={13} progress={percent / 100} className="h-12 w-full" />
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="font-medium capitalize truncate">{title}</span>
+        <span className="t-num text-[1.1rem] text-ink">{percent.toFixed(percent % 1 ? 1 : 0)}%</span>
+      </div>
+      <div className="h-2 w-full bg-sunk rounded-full overflow-hidden" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+        <div className="h-full w-full rounded-full bg-cobalt origin-left" style={{ transform: `scaleX(${percent / 100})`, transition: 'transform 300ms var(--ease-out)' }} />
+      </div>
+      <div className="flex items-center justify-between gap-4 text-[0.8rem] text-ink-3">
+        <span className="t-num">{detail}</span>
+        <span>Keep this window open</span>
+      </div>
+    </div>
+  );
 
   const renderInstaller = () => {
     const isInstalling = ['downloading', 'extracting', 'starting'].includes(installState);
 
     return (
-      <div className="flex flex-col gap-6 select-none">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 flex items-center justify-center text-amber-500 shadow-lg shadow-amber-900/10 shrink-0 animate-pulse">
-            <Cpu className="w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-white tracking-tight">Ollama Engine Required</h2>
-            <p className="text-xs text-slate-400 font-semibold tracking-wide mt-0.5">Local AI engine missing</p>
-          </div>
+      <div className="flex flex-col gap-6">
+        <div>
+          <h2 className="t-display text-[2.6rem]">Install the answer engine.</h2>
+          <p className="mt-4 text-[1.02rem] leading-relaxed text-ink-2">
+            Tell Me. writes answers with <strong className="font-semibold text-ink">Ollama</strong>, a free app that runs open
+            AI models on your Mac. It isn&apos;t running yet. If it&apos;s already installed, Tell Me starts it; otherwise it downloads and
+            installs it for you.
+          </p>
         </div>
 
-        <p className="text-xs text-slate-300 leading-relaxed font-medium">
-          To run speech transcription and answer questions securely on your own hardware, this application requires <strong>Ollama</strong> to be installed on your machine.
-        </p>
-
-        {/* Action Panel */}
         {isInstalling ? (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6 flex flex-col gap-4">
-            <div className="flex items-center justify-between text-xs font-bold text-white">
-              <span className="capitalize">{installState === 'downloading' ? `Downloading Ollama App (${installProgress}%)` : `${installState}...`}</span>
-              <Loader2 className="w-4 h-4 animate-spin text-[#562cd6]" />
-            </div>
-            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-300"
-                style={{ width: `${installProgress}%` }}
-              />
-            </div>
-            <span className="text-[10px] font-semibold text-slate-400">Please do not close the application. Extracting and launching will complete automatically.</span>
-          </div>
+          progressCard(installProgress, installState === 'downloading' ? 'Downloading Ollama' : installState === 'starting' ? 'Starting Ollama…' : `${installState}…`, '')
         ) : (
           <div className="flex flex-col gap-3">
             <button
               onClick={handleAutoInstall}
               disabled={verifying}
-              className="w-full py-3.5 bg-[#562cd6] hover:bg-[#431fb5] text-white rounded-full font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20 cursor-pointer active:scale-98 transition-all disabled:opacity-50"
+              className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-cobalt hover:bg-cobalt-hover text-on-cobalt py-3.5 font-semibold cursor-pointer active:scale-[0.99] disabled:opacity-50"
             >
-              <Download className="w-4 h-4" /> Auto-Download & Install Ollama
+              <Download className="w-4 h-4" /> Set up Ollama
             </button>
-
             <a
               href="https://ollama.com/download/Ollama-darwin.zip"
               target="_blank"
               rel="noopener noreferrer"
-              className="w-full py-3.5 bg-slate-800/40 hover:bg-slate-800/60 border border-slate-850 text-slate-300 rounded-full font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all text-center"
+              className="w-full inline-flex items-center justify-center gap-2 rounded-full py-3.5 border border-line-strong text-ink hover:border-ink font-medium"
             >
-              Manual Download from Ollama.com
+              Download it myself from ollama.com
             </a>
-
-            <div className="h-px bg-slate-800/60 my-2" />
-
             <button
               onClick={handleVerify}
               disabled={verifying}
-              className="w-full py-3.5 bg-slate-900/60 hover:bg-slate-950 border border-slate-800 text-slate-200 rounded-full font-bold text-xs flex items-center justify-center gap-2 cursor-pointer active:scale-98 transition-all disabled:opacity-50"
+              className="mt-1 inline-flex items-center justify-center gap-2 py-2 text-[0.92rem] text-ink-2 hover:text-cobalt cursor-pointer disabled:opacity-50"
             >
-              {verifying ? (
-                <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
-              ) : (
-                <>
-                  I have launched Ollama - Verify Status <RefreshCw className="w-4 h-4 text-slate-400" />
-                </>
-              )}
+              {verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              I&apos;ve opened Ollama, check again
             </button>
           </div>
         )}
 
-        {installError && (
-          <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-semibold p-4 rounded-xl flex items-start gap-2 animate-fade-in leading-relaxed">
-            <AlertTriangle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
-            <div>
-              <p className="font-bold">Installation Error</p>
-              <p className="text-[11px] text-red-400/80 mt-0.5">{installError}</p>
-            </div>
-          </div>
-        )}
+        {installError && errorBox('Installation failed', installError)}
       </div>
     );
   };
 
   const renderModelPuller = () => {
+    const downloading = models.find((m) => m.id === status.configured_model);
     return (
-      <div className="flex flex-col gap-6 select-none">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 shadow-lg shadow-indigo-900/10 shrink-0 animate-pulse">
-            <Cpu className="w-6 h-6 animate-spin" style={{ animationDuration: '3s' }} />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-white tracking-tight">AI Model Setup Required</h2>
-            <p className="text-xs text-slate-400 font-semibold tracking-wide mt-0.5">Model: '{status.configured_model}' missing</p>
-          </div>
+      <div className="flex flex-col gap-6">
+        <div>
+          <h2 className="t-display text-[2.6rem]">Pick the model that fits your Mac.</h2>
+          <p className="mt-4 text-[1.02rem] leading-relaxed text-ink-2">
+            It writes your answers, privately on this Mac. Smaller is faster; you can switch any time from the sidebar.
+          </p>
         </div>
 
-        <p className="text-xs text-slate-300 leading-relaxed font-medium">
-          Ollama is running successfully, but the local model <strong>{status.configured_model}</strong> (4.1 GB) is not yet downloaded. We need this file to generate answers locally on your Mac.
-        </p>
-
         {pulling ? (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6 flex flex-col gap-4">
-            <div className="flex items-center justify-between text-xs font-bold text-white">
-              <span className="capitalize">{pullStatus || 'Downloading model files...'}</span>
-              <span className="font-mono text-indigo-400">{pullProgress}%</span>
-            </div>
-            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-300"
-                style={{ width: `${pullProgress}%` }}
-              />
-            </div>
-            <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400">
-              <span>{pullDetails || 'Allocating disk space...'}</span>
-              <span>Keep app active during pull</span>
-            </div>
-          </div>
+          progressCard(pullProgress, `${downloading ? `${downloading.label}: ` : ''}${pullStatus || 'downloading'}`, pullDetails || 'preparing…')
         ) : (
-          <div className="flex flex-col gap-3">
-            <button
-              onClick={handlePullModel}
-              disabled={verifying}
-              className="w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-full font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 cursor-pointer active:scale-98 transition-all"
-            >
-              Download Local '{status.configured_model}' Model <ArrowRight className="w-4 h-4" />
-            </button>
-            <span className="text-[10px] text-center font-bold uppercase tracking-wider text-slate-500">Approx. 4.1 GB download size</span>
-          </div>
+          <ul className="flex flex-col gap-3">
+            {models.map((model) => (
+              <li
+                key={model.id}
+                className={`rounded-[20px] border p-4 sm:p-5 grid grid-cols-[1fr_auto] items-center gap-4 ${model.recommended ? 'border-cobalt bg-cobalt-wash' : 'border-line bg-surface'}`}
+              >
+                <div className="min-w-0">
+                  <p className="flex items-center gap-2 flex-wrap">
+                    <span className="t-title text-[1.1rem]">{model.label}</span>
+                    {model.recommended && <span className="rounded-full bg-lime text-on-lime text-[0.7rem] font-semibold px-2 py-0.5">Recommended</span>}
+                    {model.installed && <span className="inline-flex items-center gap-1 text-[0.78rem] text-success"><Check className="w-3.5 h-3.5" />Downloaded</span>}
+                  </p>
+                  <p className="text-[0.88rem] leading-snug text-ink-2 mt-1">{model.description}</p>
+                  {model.size_gb > 0 && (
+                    <p className="mt-2 t-num text-[0.75rem] text-ink-3">{model.size_gb} GB download · {model.id}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => chooseModel(model)}
+                  disabled={verifying}
+                  className={`shrink-0 inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[0.9rem] font-semibold cursor-pointer disabled:opacity-50 ${
+                    model.recommended ? 'bg-cobalt hover:bg-cobalt-hover text-on-cobalt' : 'border border-line-strong text-ink hover:border-ink bg-surface'
+                  }`}
+                >
+                  {model.installed ? <><Check className="w-4 h-4" /> Use</> : <><Download className="w-4 h-4" /> Get</>}
+                </button>
+              </li>
+            ))}
+            {models.length === 0 && (
+              <li>
+                <button
+                  onClick={handlePullModel}
+                  disabled={verifying}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-cobalt hover:bg-cobalt-hover text-on-cobalt py-3.5 font-semibold cursor-pointer"
+                >
+                  Download &ldquo;{status.configured_model}&rdquo; <ArrowRight className="w-4 h-4" />
+                </button>
+              </li>
+            )}
+          </ul>
         )}
+
+        {pullError && errorBox("Couldn't download the model", pullError)}
       </div>
     );
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#070913] flex items-center justify-center p-6 relative overflow-hidden font-sans">
-      {/* Background glow meshes */}
-      <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full bg-blue-500/10 blur-[130px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] rounded-full bg-indigo-600/10 blur-[130px] pointer-events-none" />
-
-      <div className="w-full max-w-md bg-slate-950/40 border border-slate-850 backdrop-blur-md rounded-[2.5rem] p-8 md:p-10 shadow-[0_30px_60px_rgba(0,0,0,0.5)] relative overflow-hidden">
-        {!status.ollama_running ? renderInstaller() : renderModelPuller()}
+    <div className="min-h-screen w-full bg-bg flex flex-col">
+      <header className="max-w-[1100px] w-full mx-auto px-4 sm:px-8 h-16 flex items-center justify-between">
+        <Wordmark className="text-[1.5rem]" />
+        <span className="text-[0.85rem] text-ink-3">Setup · {status.ollama_running ? 'step 2 of 2' : 'step 1 of 2'}</span>
+      </header>
+      <div className="flex-1 flex items-center justify-center px-4 sm:px-8 py-10">
+        <div className="w-full max-w-[36rem]">
+          {!status.ollama_running ? renderInstaller() : renderModelPuller()}
+          <p className="mt-8 flex items-center gap-2 text-[0.85rem] text-ink-3">
+            <span className="w-2 h-2 rounded-full bg-success" /> One-time setup. After this, recordings are answered on this Mac, even offline while you&apos;re signed in.
+          </p>
+        </div>
       </div>
     </div>
   );

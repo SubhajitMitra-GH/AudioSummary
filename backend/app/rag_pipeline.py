@@ -1,43 +1,65 @@
-import os
 import re
+import json
 import logging
-import requests
 import base64
 import hashlib
+from functools import lru_cache
 from typing import List
+
 import numpy as np
+import requests
+from cryptography.fernet import Fernet
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
-from cryptography.fernet import Fernet
+
 from app.config import settings
+from app.llm_models import get_active_model
 from app.redis_client import redis_client
+from app.supabase_rest import rest_url, user_headers
 
 logger = logging.getLogger("uvicorn.error")
 
+
+@lru_cache(maxsize=1)
 def get_fernet_cipher() -> Fernet:
-    """Derive a valid 32-byte key from backend_encryption_key configuration setting."""
-    key_source = settings.backend_encryption_key
-    digest = hashlib.sha256(key_source.encode()).digest()
-    fernet_key = base64.urlsafe_b64encode(digest)
-    return Fernet(fernet_key)
+    """Derive a valid 32-byte key from backend_encryption_key configuration setting.
+
+    Note: this key is shared by every user of an installation, so it protects against someone
+    who only has the database, not against someone who has the app.
+    """
+    digest = hashlib.sha256(settings.backend_encryption_key.encode()).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
 
 def encrypt_data(text: str) -> str:
-    """Symmetrically encrypt text using AES-128 key derived from config."""
+    """Symmetrically encrypt text with Fernet (AES-128-CBC + HMAC) using the configured key."""
     if not text:
         return ""
-    cipher = get_fernet_cipher()
-    return cipher.encrypt(text.encode()).decode()
+    return get_fernet_cipher().encrypt(text.encode()).decode()
+
 
 def decrypt_data(ciphertext: str) -> str:
-    """Symmetrically decrypt AES ciphertext using config key."""
+    """Decrypt Fernet ciphertext produced by encrypt_data."""
     if not ciphertext:
         return ""
     try:
-        cipher = get_fernet_cipher()
-        return cipher.decrypt(ciphertext.encode()).decode()
+        return get_fernet_cipher().decrypt(ciphertext.encode()).decode()
     except Exception as e:
         logger.error(f"Failed to decrypt document chunk content: {e}")
         return "[Decryption Error]"
+
+
+def parse_embedding(value) -> List[float]:
+    """Supabase returns pgvector columns as a string like "[0.1,0.2]" and json columns as a list."""
+    if isinstance(value, str):
+        value = json.loads(value)
+    return [float(v) for v in value]
+
+
+def escape_tag(value: str) -> str:
+    """Escape a value for use inside a RediSearch TAG filter."""
+    return re.sub(r"([\-.,<>{}\[\]\"'/\\!@#\$%^&*()+=~|?:;\s])", r"\\\1", value)
+
 
 class RAGPipeline:
     def __init__(self):
@@ -69,17 +91,56 @@ class RAGPipeline:
         self.load_model()
         if not self.embedding_model:
             raise RuntimeError("Embedding model failed to load.")
-        
+
         logger.info(f"Generating embeddings for {len(chunks)} chunks...")
         embeddings = self.embedding_model.encode(chunks)
         # Convert numpy array to list of floats
         return [emb.tolist() for emb in embeddings]
 
+    def restore_chunks_from_cloud(self, audio_id: str, token: str) -> int:
+        """If Redis has no chunks for this session, download them from Supabase. Returns how many were restored."""
+        if redis_client.session_chunk_keys(audio_id):
+            return 0
+        logger.info(f"No local chunks for session {audio_id}. Restoring from Supabase...")
+        try:
+            res = requests.get(
+                rest_url("document_chunks"),
+                headers=user_headers(token),
+                params={"session_id": f"eq.{audio_id}", "select": "*"},
+                timeout=10,
+            )
+        except requests.RequestException as e:
+            logger.warning(f"Error restoring chunks from Supabase: {e}")
+            return 0
+        if res.status_code != 200:
+            logger.warning(f"Could not check Supabase chunks: status {res.status_code}")
+            return 0
+
+        restored = 0
+        for cc in res.json():
+            try:
+                redis_client.save_chunk(
+                    session_id=cc["session_id"],
+                    idx=int(cc["chunk_index"]),
+                    content=cc["content"],
+                    embedding=parse_embedding(cc["embedding"]),
+                    user_id=str(cc["user_id"]),
+                    synced=True
+                )
+                restored += 1
+            except (KeyError, TypeError, ValueError) as e:
+                logger.warning(f"Skipping malformed cloud chunk: {e}")
+        logger.info(f"Restored {restored} chunks for session {audio_id} from Supabase.")
+        return restored
+
     def ingest_audio_transcript(self, audio_id: str, transcript: str, token: str, user_id: str, chunk_size: int = 1000, chunk_overlap: int = 150) -> int:
-        """Pipeline function to chunk, embed, and store transcript locally in Redis and cloud Supabase.
-        
+        """Chunk, embed, and store a transcript locally in Redis and in Supabase.
+
+        A session can hold several sources: new chunks are numbered after the existing ones
+        so earlier sources are never overwritten.
+
         Returns:
-            Number of successfully stored chunks.
+            Number of stored chunks.
         """
         chunks = self.chunk_text(transcript, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         if not chunks:
@@ -87,16 +148,19 @@ class RAGPipeline:
             return 0
 
         embeddings = self.generate_embeddings(chunks)
-        
+
         # Ensure the vector index exists in local Redis
         redis_client.create_vector_index(dim=self.vector_dim)
 
+        # Make sure earlier sources are present locally before numbering the new chunks.
+        self.restore_chunks_from_cloud(audio_id, token)
+        offset = len(redis_client.session_chunk_keys(audio_id))
+
         # 1. Save all chunks locally in Redis first
-        encrypted_chunks = []
-        for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+        rows = []
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            idx = offset + i
             enc_chunk = encrypt_data(chunk)
-            encrypted_chunks.append((enc_chunk, embedding))
-            # Cache locally in Redis
             redis_client.save_chunk(
                 session_id=audio_id,
                 idx=idx,
@@ -105,44 +169,36 @@ class RAGPipeline:
                 user_id=user_id,
                 synced=False
             )
-
-        # 2. Try uploading to online Supabase in parallel
-        url = f"{settings.supabase_url}/rest/v1/document_chunks"
-        headers = {
-            "apikey": settings.supabase_anon_key,
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Prefer": "return=minimal"
-        }
-        
-        payload = [
-            {
+            rows.append({
                 "session_id": audio_id,
                 "chunk_index": idx,
                 "content": enc_chunk,
                 "embedding": embedding,
                 "user_id": user_id
-            }
-            for idx, (enc_chunk, embedding) in enumerate(encrypted_chunks)
-        ]
-        
+            })
+
+        # 2. Try uploading to Supabase; unsynced chunks are retried by /sync
         try:
-            logger.info(f"Attempting to sync {len(payload)} chunks to online Supabase...")
-            res = requests.post(url, json=payload, headers=headers, timeout=10)
+            logger.info(f"Attempting to sync {len(rows)} chunks to Supabase...")
+            res = requests.post(
+                rest_url("document_chunks"),
+                json=rows,
+                headers=user_headers(token, json_body=True, prefer="return=minimal"),
+                timeout=10,
+            )
             if res.status_code in (200, 201):
-                logger.info("Successfully synced vectors to Supabase. Updating local sync flags...")
-                # Mark as synced locally
-                for idx in range(len(chunks)):
-                    redis_client.mark_chunk_synced(f"chunk:{audio_id}:{idx}")
+                logger.info("Successfully synced vectors to Supabase.")
+                for row in rows:
+                    redis_client.mark_chunk_synced(f"chunk:{audio_id}:{row['chunk_index']}")
             else:
-                logger.warning(f"Failed to sync to Supabase: {res.status_code} {res.text}. Chunks remain queued offline.")
-        except Exception as e:
+                logger.warning(f"Failed to sync chunks to Supabase: status {res.status_code}. Chunks remain queued offline.")
+        except requests.RequestException as e:
             logger.warning(f"Could not reach Supabase for vector sync: {e}. Chunks remain queued offline.")
 
         return len(chunks)
 
-    def retrieve_context(self, question: str, token: str, audio_id: str | None = None, k: int = 6) -> List[dict]:
-        """Retrieve top k relevant context chunks locally from Redis vector store (100% offline)."""
+    def retrieve_context(self, question: str, token: str, user_id: str, audio_id: str, k: int = 6) -> List[dict]:
+        """Retrieve the top k chunks of this user's session from the local Redis vector store."""
         self.load_model()
         if not self.embedding_model:
             logger.error("Embedding model not loaded.")
@@ -152,53 +208,18 @@ class RAGPipeline:
             logger.error("Redis client is not connected. Local search aborted.")
             return []
 
-        # Lazy Restore: If local Redis has 0 chunks for this audio_id, fetch from Supabase to restore state
-        if audio_id:
-            local_keys = redis_client.client.keys(f"chunk:{audio_id}:*")
-            if not local_keys:
-                logger.info(f"No local chunks found in Redis for session {audio_id}. Restoring from Supabase cloud...")
-                url = f"{settings.supabase_url}/rest/v1/document_chunks"
-                headers = {
-                    "apikey": settings.supabase_anon_key,
-                    "Authorization": f"Bearer {token}"
-                }
-                params = {
-                    "session_id": f"eq.{audio_id}",
-                    "select": "*"
-                }
-                try:
-                    res = requests.get(url, headers=headers, params=params, timeout=10)
-                    if res.status_code == 200:
-                        cloud_chunks = res.json()
-                        if cloud_chunks:
-                            logger.info(f"Found {len(cloud_chunks)} chunks in Supabase. Caching locally in Redis...")
-                            for cc in cloud_chunks:
-                                redis_client.save_chunk(
-                                    session_id=cc["session_id"],
-                                    idx=int(cc["chunk_index"]),
-                                    content=cc["content"],
-                                    embedding=cc["embedding"],
-                                    user_id=cc["user_id"],
-                                    synced=True
-                                )
-                            logger.info(f"Successfully restored {len(cloud_chunks)} chunks to Redis VSS.")
-                        else:
-                            logger.info("No chunks found in Supabase for this session.")
-                    else:
-                        logger.warning(f"Could not check Supabase chunks: status {res.status_code}")
-                except Exception as e:
-                    logger.warning(f"Error restoring chunks from Supabase: {e}")
+        # Lazy restore: if this device has no chunks for the session yet, fetch them from Supabase.
+        self.restore_chunks_from_cloud(audio_id, token)
+        redis_client.create_vector_index(dim=self.vector_dim)
 
-        logger.info(f"Embedding query: '{question}'")
         question_emb = self.embedding_model.encode([question])[0]
         query_vector = np.array(question_emb, dtype=np.float32).tobytes()
 
-        # Build local Redis search query
-        if audio_id:
-            escaped_audio_id = re.sub(r"([\-.,<>{}\[\]\"'/\\!@#\$%^&*()+=~|?:;])", r"\\\1", audio_id)
-            query_string = f"(@session_id:{{{escaped_audio_id}}})=>[KNN {k} @embedding $query_vec AS vector_score]"
-        else:
-            query_string = f"*=>[KNN {k} @embedding $query_vec AS vector_score]"
+        # Always scope the search to the signed-in user AND the session.
+        query_string = (
+            f"(@user_id:{{{escape_tag(user_id)}}} @session_id:{{{escape_tag(audio_id)}}})"
+            f"=>[KNN {k} @embedding $query_vec AS vector_score]"
+        )
 
         from redis.commands.search.query import Query
         q = Query(query_string)\
@@ -207,7 +228,6 @@ class RAGPipeline:
             .dialect(2)
 
         try:
-            logger.info(f"Querying local Redis Vector DB index: {query_string}")
             results = redis_client.client.ft(redis_client.vector_idx_name).search(q, query_params={"query_vec": query_vector})
             retrieved_chunks = []
             for doc in results.docs:
@@ -223,14 +243,14 @@ class RAGPipeline:
             logger.error(f"Error during vector retrieval from local Redis: {e}")
             return []
 
-    def answer_question(self, question: str, token: str, audio_id: str | None = None) -> dict:
+    def answer_question(self, question: str, token: str, user_id: str, audio_id: str) -> dict:
         """Retrieve relevant context chunks and generate a response using local Ollama."""
         # 1. Retrieve context chunks
-        chunks = self.retrieve_context(question, token=token, audio_id=audio_id, k=6)
-        
+        chunks = self.retrieve_context(question, token=token, user_id=user_id, audio_id=audio_id, k=6)
+
         # 2. Extract contents and build context text
         context_text = "\n\n".join([f"[Chunk {c['chunk_index']}]: {c['content']}" for c in chunks])
-        
+
         # 3. Create prompt
         prompt = f"""You are an expert assistant summarizing and answering questions about an audio recording.
 Answer the user's question using the provided transcription context below. Support your answer with facts directly from the context.
@@ -255,21 +275,17 @@ Question: {question}
 Answer:"""
 
         # 4. Invoke local Ollama model
-        try:
-            logger.info("Initializing Ollama Llama 3 model connection...")
-            from langchain_community.llms import Ollama
-            llm = Ollama(model=settings.llm_model)
-            
-            logger.info("Generating response from local Ollama...")
-            response = llm.invoke(prompt)
-            logger.info("Ollama response generated successfully.")
-            
-            return {
-                "answer": response.strip(),
-                "context": chunks
-            }
-        except Exception as e:
-            logger.error(f"Error generating answer via Ollama: {e}")
-            raise e
+        from langchain_community.llms import Ollama
+        model = get_active_model()
+        logger.info(f"Generating response with local Ollama model '{model}'...")
+        llm = Ollama(model=model)
+        response = llm.invoke(prompt)
+        logger.info("Ollama response generated successfully.")
+
+        return {
+            "answer": response.strip(),
+            "context": chunks
+        }
+
 
 rag_pipeline = RAGPipeline()
